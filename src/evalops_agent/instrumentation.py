@@ -6,6 +6,7 @@ import uuid
 from typing import Any
 
 import agent_control
+from agent_control.settings import configure_settings, get_settings
 from galileo import galileo_context
 
 from . import __version__
@@ -31,6 +32,7 @@ class InstrumentedSession:
         self._session_started = False
         self._had_runtime_auth_mode = False
         self._previous_runtime_auth_mode: str | None = None
+        self._previous_sdk_connection: dict[str, str] | None = None
 
     def _set_runtime_auth_mode(self) -> None:
         key = "AGENT_CONTROL_RUNTIME_AUTH_MODE"
@@ -45,6 +47,26 @@ class InstrumentedSession:
         else:
             os.environ.pop(key, None)
 
+    def _configure_agent_control_sdk(self) -> None:
+        """Keep decorators aligned with the URL loaded from the application env file."""
+        current = get_settings()
+        self._previous_sdk_connection = {
+            "url": current.url,
+            "api_key": current.api_key,
+            "api_key_header": current.api_key_header,
+        }
+        configure_settings(
+            url=self.settings.agent_control_url,
+            api_key=self.settings.galileo_api_key,
+            api_key_header=self.settings.agent_control_api_key_header,
+        )
+
+    def _restore_agent_control_sdk(self) -> None:
+        if self._previous_sdk_connection is None:
+            return
+        configure_settings(**self._previous_sdk_connection)
+        self._previous_sdk_connection = None
+
     def __enter__(self) -> "InstrumentedSession":
         self._context = galileo_context(
             project=self.scope.project_name,
@@ -54,6 +76,7 @@ class InstrumentedSession:
         try:
             self._logger = galileo_context.get_logger_instance()
             self._set_runtime_auth_mode()
+            self._configure_agent_control_sdk()
             self._logger.enable_agent_control()
             agent_control.init(
                 agent_name=self.settings.agent_name,
@@ -80,6 +103,7 @@ class InstrumentedSession:
                 except Exception:
                     pass
             self._restore_runtime_auth_mode()
+            self._restore_agent_control_sdk()
             try:
                 self._context.__exit__(*sys.exc_info())
             except Exception:
@@ -157,6 +181,7 @@ class InstrumentedSession:
                     cleanup_errors.append(session_error)
         finally:
             self._restore_runtime_auth_mode()
+            self._restore_agent_control_sdk()
             if self._context is not None:
                 try:
                     self._context.__exit__(exc_type, exc, traceback)

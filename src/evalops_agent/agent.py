@@ -8,6 +8,7 @@ from galileo import log
 from galileo.openai import openai
 
 from .config import Settings
+from .model_api import raise_model_connection_error
 from .models import Scope
 from .prompts import SYSTEM_PROMPT
 from .security import compact_json
@@ -36,6 +37,12 @@ class EvalOpsAgent:
             {"role": "system", "content": SYSTEM_PROMPT + scope_prompt}
         ]
 
+    def _create_completion(self, **kwargs: Any) -> Any:
+        try:
+            return self.client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            raise_model_connection_error(exc, self.settings)
+
     @log(span_type="agent", name="evalops_user_request_control")
     @control(step_name="evalops_user_request")
     def guard_user_request(self, user_input: str) -> str:
@@ -47,7 +54,7 @@ class EvalOpsAgent:
         self.messages.append({"role": "user", "content": user_input})
         tool_calls_used = 0
         while True:
-            response = self.client.chat.completions.create(
+            response = self._create_completion(
                 model=self.settings.model,
                 messages=self.messages,
                 tools=TOOL_SCHEMAS,
@@ -136,7 +143,7 @@ class EvalOpsAgent:
                     }
                 )
             if budget_exhausted or tool_calls_used >= self.settings.max_tool_calls_per_turn:
-                final = self.client.chat.completions.create(
+                final = self._create_completion(
                     model=self.settings.model,
                     messages=self.messages,
                     tools=TOOL_SCHEMAS,

@@ -1,4 +1,4 @@
-# Direct runtime dependencies tested with EvalOps Agent 0.4.0.
+# Direct runtime dependencies tested with EvalOps Agent 0.4.1.
 # Transitive dependencies are resolved by pip for the target platform.
 agent-control-sdk[galileo]==8.4.0
 galileo[openai]==2.5.1

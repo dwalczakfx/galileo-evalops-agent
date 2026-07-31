@@ -237,6 +237,55 @@ class AgentControlService:
             self.settings.max_output_chars,
         )
 
+    def probe_runtime_evaluation(
+        self,
+        *,
+        agent_name: str,
+        target_type: str,
+        target_id: str,
+    ) -> dict[str, Any]:
+        """Verify the target-bound runtime evaluation path used by decorators."""
+
+        async def probe() -> dict[str, Any]:
+            async with agent_control.AgentControlClient(
+                base_url=self.settings.agent_control_url,
+                api_key=self.settings.galileo_api_key,
+                api_key_header=self.settings.agent_control_api_key_header,
+                runtime_auth_mode=self.settings.agent_control_runtime_auth_mode,
+            ) as client:
+                response = await client.post_runtime_evaluation(
+                    json={
+                        "agent_name": agent_name,
+                        "step": {
+                            "type": "llm",
+                            "name": "evalops_user_request",
+                            "input": "EvalOps runtime connectivity check",
+                            "output": "",
+                        },
+                        "stage": "pre",
+                        "target_type": target_type,
+                        "target_id": target_id,
+                    },
+                    target_type=target_type,
+                    target_id=target_id,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                if not isinstance(payload, dict) or not isinstance(
+                    payload.get("is_safe"), bool
+                ):
+                    raise RuntimeError(
+                        "Agent Control runtime evaluation returned an invalid response."
+                    )
+                return payload
+
+        result = _run_async(probe())
+        return sanitize(
+            result,
+            self.settings.secret_values(),
+            self.settings.max_output_chars,
+        )
+
     def refresh_runtime_controls(self) -> list[dict[str, Any]]:
         result = agent_control.refresh_controls() or []
         return sanitize(

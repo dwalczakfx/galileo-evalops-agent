@@ -13,6 +13,7 @@ from .demo import DEMO_CASES, seed_demo
 from .examples import print_starter_requests
 from .galileo_api import GalileoService
 from .instrumentation import InstrumentedSession, TelemetryUploadError
+from .model_api import ModelConnectionError, verify_model_connection
 from .models import OperationPreview, Scope
 from .policy_setup import STARTER_CONTROLS, StarterPolicyInstaller
 from .presentation import (
@@ -199,6 +200,17 @@ def run_doctor(settings: Settings, service: GalileoService, args: argparse.Names
     print(f"  project: {scope.project_name} ✓")
     print(f"  source Log Stream: {scope.source_stream_name} ✓")
     ready = True
+    try:
+        model_check = verify_model_connection(settings)
+    except ModelConnectionError as exc:
+        safe_error = sanitize(str(exc), settings.secret_values(), 500)
+        print(f"  model authentication/access: failed ({safe_error})")
+        ready = False
+    else:
+        print(
+            f"  model authentication/access: {model_check['model']} ✓ "
+            "(0 generation calls)"
+        )
     if scope.telemetry_stream_id:
         print(f"  telemetry Log Stream: {scope.telemetry_stream_name} ✓")
     else:
@@ -254,6 +266,28 @@ def run_doctor(settings: Settings, service: GalileoService, args: argparse.Names
                         "--with-agent-control"
                     )
                     ready = False
+                try:
+                    runtime_result = control_service.probe_runtime_evaluation(
+                        agent_name=settings.agent_name,
+                        target_type="log_stream",
+                        target_id=scope.telemetry_stream_id,
+                    )
+                except Exception as exc:
+                    safe_error = sanitize(str(exc), settings.secret_values(), 500)
+                    print(
+                        "  Agent Control runtime evaluation: failed "
+                        f"({safe_error})"
+                    )
+                    ready = False
+                else:
+                    if runtime_result.get("is_safe") is True:
+                        print("  Agent Control runtime evaluation: ✓")
+                    else:
+                        print(
+                            "  Agent Control runtime evaluation: connectivity probe "
+                            "was unexpectedly blocked"
+                        )
+                        ready = False
     if settings.env_file.exists():
         print(f"  environment file: {settings.env_file} ✓")
     else:
@@ -566,7 +600,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--select-scope",
         action="store_true",
-        help="Interactively select a project and source Log Stream instead of using configured defaults.",
+        help=(
+            "Interactively select a project and source Log Stream instead of "
+            "using configured defaults."
+        ),
     )
     parser.add_argument("--dry-run", action="store_true", help="Preview but never execute writes.")
     parser.add_argument(
@@ -658,7 +695,13 @@ def main(argv: list[str] | None = None) -> None:
     except KeyboardInterrupt:
         print("\nInterrupted.", file=sys.stderr)
         code = 130
-    except (ConfigurationError, LookupError, PermissionError, ValueError) as exc:
+    except (
+        ConfigurationError,
+        LookupError,
+        ModelConnectionError,
+        PermissionError,
+        ValueError,
+    ) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         code = 2
     except Exception as exc:

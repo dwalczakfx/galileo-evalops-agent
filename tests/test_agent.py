@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from evalops_agent.agent import EvalOpsAgent
 from evalops_agent.config import Settings
+from evalops_agent.model_api import ModelConnectionError
 
 
 def settings() -> Settings:
@@ -70,6 +71,22 @@ class FakeTools:
 
 
 class AgentTests(unittest.TestCase):
+    def test_model_authentication_error_is_actionable(self) -> None:
+        agent = object.__new__(EvalOpsAgent)
+        agent.settings = settings()
+        agent.client = SimpleNamespace(
+            chat=SimpleNamespace(
+                completions=SimpleNamespace(
+                    create=lambda **_: (_ for _ in ()).throw(
+                        RuntimeError("401 Incorrect API key provided: masked-key")
+                    )
+                )
+            )
+        )
+
+        with self.assertRaisesRegex(ModelConnectionError, "OPENAI_API_KEY"):
+            agent._create_completion(model="test-model", messages=[])
+
     def test_tool_budget_counts_calls_not_model_rounds(self) -> None:
         tool_calls = [
             SimpleNamespace(

@@ -116,7 +116,9 @@ evalops doctor
 ```
 
 The doctor checks configuration, project connectivity, source and telemetry
-Log Streams, Agent Control registration, and effective control coverage.
+Log Streams, exact model access, Agent Control registration, effective control
+coverage, and the runtime evaluation endpoint. The model check reads metadata
+and makes no generation calls.
 
 ### 6. Start the agent
 
@@ -285,9 +287,9 @@ evalops --yes --project my-project demo-seed
 ## Docker
 
 ```bash
-docker build -t galileo-evalops-agent:0.4.0 .
+docker build -t galileo-evalops-agent:0.4.1 .
 docker run --rm -it --env-file .env \
-  galileo-evalops-agent:0.4.0 chat
+  galileo-evalops-agent:0.4.1 chat
 ```
 
 The image runs as an unprivileged user and does not include `.env`, tests, Git

@@ -14,6 +14,11 @@ class SecurityTests(unittest.TestCase):
         self.assertNotIn("abc", text)
         self.assertNotIn("xyz.123", text)
 
+    def test_redacts_masked_key_from_provider_error(self) -> None:
+        text = redact_text("Incorrect API key provided: PLACEHOL**********_KEY")
+        self.assertNotIn("PLACEHOL", text)
+        self.assertIn("[REDACTED]", text)
+
     def test_redacts_sensitive_dictionary_keys(self) -> None:
         cleaned = sanitize({"token": "abc", "safe": "value"})
         self.assertEqual(cleaned["token"], "[REDACTED]")

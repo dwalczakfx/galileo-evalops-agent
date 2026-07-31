@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from evalops_agent.config import Settings
@@ -35,6 +36,40 @@ SCOPE = Scope(
 
 
 class InstrumentationTests(unittest.TestCase):
+    @patch("evalops_agent.instrumentation.configure_settings")
+    @patch("evalops_agent.instrumentation.get_settings")
+    @patch("evalops_agent.instrumentation.agent_control.shutdown")
+    @patch("evalops_agent.instrumentation.agent_control.init")
+    @patch("evalops_agent.instrumentation.galileo_context")
+    def test_session_configures_decorator_runtime_from_application_settings(
+        self,
+        context: MagicMock,
+        init_control: MagicMock,
+        shutdown_control: MagicMock,
+        get_sdk_settings: MagicMock,
+        configure_sdk: MagicMock,
+    ) -> None:
+        context.return_value = MagicMock()
+        context.get_logger_instance.return_value = MagicMock()
+        get_sdk_settings.return_value = SimpleNamespace(
+            url="http://localhost:8000",
+            api_key="",
+            api_key_header="X-API-Key",
+        )
+
+        with InstrumentedSession(settings(), SCOPE, "test-session"):
+            configure_sdk.assert_any_call(
+                url="https://control.example.test",
+                api_key="galileo-secret",
+                api_key_header="Galileo-API-Key",
+            )
+
+        configure_sdk.assert_called_with(
+            url="http://localhost:8000",
+            api_key="",
+            api_key_header="X-API-Key",
+        )
+
     @patch("evalops_agent.instrumentation.agent_control.shutdown")
     @patch("evalops_agent.instrumentation.agent_control.init")
     @patch("evalops_agent.instrumentation.galileo_context")
@@ -75,7 +110,7 @@ class InstrumentationTests(unittest.TestCase):
         init_control.assert_called_once()
         self.assertEqual(init_control.call_args.kwargs["target_id"], "telemetry-id")
         self.assertEqual(init_control.call_args.kwargs["target_type"], "log_stream")
-        self.assertEqual(init_control.call_args.kwargs["agent_version"], "0.4.0")
+        self.assertEqual(init_control.call_args.kwargs["agent_version"], "0.4.1")
         step_names = {
             step["name"] for step in init_control.call_args.kwargs["steps"]
         }

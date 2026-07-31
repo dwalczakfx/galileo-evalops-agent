@@ -6,8 +6,8 @@ from typing import Any, Iterable
 
 
 SENSITIVE_ASSIGNMENT = re.compile(
-    r"(?i)\b(api[_-]?key|authorization|password|secret|token)\b"
-    r"(\s*[:=]\s*)([\"']?)[^\s,;\"']+"
+    r"(?i)\b(api[ _-]?key|authorization|password|secret|token)\b"
+    r"(\s+(?:provided|value|is))?(\s*[:=]\s*)([\"']?)[^\s,;\"']+"
 )
 BEARER_TOKEN = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 SENSITIVE_KEY_MARKERS = (
@@ -38,7 +38,7 @@ def redact_text(text: str, secrets: Iterable[str] = ()) -> str:
         if secret:
             redacted = redacted.replace(secret, "[REDACTED]")
     redacted = BEARER_TOKEN.sub("Bearer [REDACTED]", redacted)
-    return SENSITIVE_ASSIGNMENT.sub(r"\1\2[REDACTED]", redacted)
+    return SENSITIVE_ASSIGNMENT.sub(r"\1\2\3[REDACTED]", redacted)
 
 
 def sanitize(value: Any, secrets: Iterable[str] = (), max_chars: int = 4000) -> Any:
