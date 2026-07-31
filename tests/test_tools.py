@@ -13,6 +13,31 @@ class FakeService:
     def metric_catalog(self, scope):
         return {"metric-id": "correctness"}
 
+    def profile_metric_values(self, scope, window, limit):
+        return {
+            "window": window.public_dict(),
+            "configured_metrics_observed": ["correctness", "factuality"],
+            "metrics_with_numeric_values": ["correctness"],
+            "metrics_without_numeric_values": ["factuality"],
+            "metrics_not_observed_in_window": [],
+            "metric_profiles": [
+                {
+                    "metric": "correctness",
+                    "samples_present": 10,
+                    "samples_with_numeric_value": 10,
+                    "numeric_coverage_percent": 100.0,
+                    "minimum": 0.4,
+                    "maximum": 0.9,
+                    "average": 0.7,
+                }
+            ],
+            "candidates_examined": 10,
+            "candidates_in_time_window": 10,
+            "candidate_limit": limit,
+            "search_mode": "bounded_recent_sample",
+            "exhaustive": False,
+        }
+
     def query_metrics(self, scope, window, group_by=None, interval_minutes=60):
         return {"aggregate_metrics": {"requests_count": 10, "average_correctness": 0.8}}
 
@@ -125,9 +150,13 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(result["count"], 20)
 
     def test_available_metrics_are_bounded_metadata(self) -> None:
-        result = self.registry.list_available_metrics()
-        self.assertEqual(result["metrics"], ["correctness"])
-        self.assertEqual(result["sample_limit"], 3)
+        result = self.registry.list_available_metrics(hours=24)
+        self.assertEqual(result["metrics_with_numeric_values"], ["correctness"])
+        self.assertEqual(result["metrics_without_numeric_values"], ["factuality"])
+        self.assertEqual(result["candidate_limit"], 50)
+
+        cached = self.registry.list_available_metrics(hours=24)
+        self.assertTrue(cached["cached"])
 
     def test_prompt_names_are_discoverable(self) -> None:
         result = self.registry.list_prompts()

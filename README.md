@@ -149,10 +149,12 @@ example, **Investigate production quality** includes quality changes,
 low-quality trace triage, proactive Signal candidates, and handoff from a known
 Signal. Type `menu` at any time to return to the topics.
 
-The recommended start discovers the metrics that actually exist on the selected
-Log Stream, proposes three useful checks, marks one as Recommended, and supplies
-safe starting defaults. You do not need to bring an example, metric, threshold,
-or Signal name.
+The recommended start profiles one bounded recent trace page in the selected
+Log Stream. It separates configured metrics from metrics that actually have
+numeric values in the requested window before proposing a check. If the window
+contains no traces or a metric has no values, the agent explains that instead of
+suggesting arbitrary threshold changes. You do not need to bring an example,
+metric, threshold, or Signal name.
 
 Once a workflow starts, short answers such as `yes`, `1h`, `0.5`, or `20` are
 passed to the conversation instead of being interpreted as menu selections.

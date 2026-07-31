@@ -50,12 +50,17 @@ GUIDED_USE_CASES = (
         title="Investigate a quality drop",
         description="Measure a change and inspect representative failures.",
         opening_request=(
-            "Start the guided 'Investigate a quality drop' workflow. List the "
-            "available metrics, then recommend one plausible quality metric using "
-            "only names that exist on this Log Stream. Explain the recommendation "
-            "and offer the 24-hour default; do not make me invent an example. Ask "
-            "one question at a time and interpret 'yes' as accepting your last "
-            "recommended default. Query aggregates before retrieving traces."
+            "Start the guided 'Investigate a quality drop' workflow. Profile actual "
+            "numeric metric coverage for the last 24 hours before recommending "
+            "anything. Separate configured metrics with values from metrics with no "
+            "values. Recommend only a populated quality metric and cite its sample "
+            "coverage or observed range. Always report candidates examined and "
+            "candidates inside the window. If no quality metric is populated, "
+            "explain that and propose the most useful diagnostic next step. Do not "
+            "make me invent an example. Ask one question at a time and interpret "
+            "'yes' as "
+            "accepting your last recommendation. Execute accepted bounded reads "
+            "without asking for another confirmation."
         ),
     ),
     GuidedUseCase(
@@ -64,8 +69,8 @@ GUIDED_USE_CASES = (
         description="Choose failure criteria and inspect a small evidence-backed sample.",
         opening_request=(
             "Start the guided 'Find and explain low-quality traces' workflow. "
-            "Discover available metrics and recommend the strongest quality metric "
-            "to start with. Propose a clearly labeled heuristic threshold only for "
+            "Profile actual metric values and recommend only a populated quality "
+            "metric. Propose a clearly labeled heuristic threshold only for "
             "a normalized quality metric, plus defaults of 24 hours and 10 traces. "
             "Ask me to accept or change one decision at a time. Use below-threshold "
             "search for quality, but above-threshold search for cost or latency."

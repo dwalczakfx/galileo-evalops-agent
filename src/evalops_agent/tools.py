@@ -65,8 +65,16 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "list_available_metrics",
-            "description": "List friendly metric names available on the selected Log Stream using a sample of at most three traces.",
-            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+            "description": (
+                "Profile configured metrics and actual numeric value coverage in one "
+                "bounded recent trace sample. Prefer metrics_with_numeric_values "
+                "when recommending an investigation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {"hours": {"type": "integer", "minimum": 1}},
+                "additionalProperties": False,
+            },
         },
     },
     {
@@ -603,12 +611,27 @@ class ToolRegistry:
             }
 
     @log(span_type="tool", name="galileo.list_available_metrics")
-    def list_available_metrics(self) -> dict[str, Any]:
-        catalog = self.service.metric_catalog(self.scope)
+    def list_available_metrics(self, hours: int | None = None) -> dict[str, Any]:
+        selected_hours = hours or self.settings.default_lookback_hours
+        window = TimeWindow.recent_hours(
+            selected_hours,
+            self.settings.max_lookback_hours,
+        )
+        cache_key = json.dumps(["metric-profile", selected_hours])
+        was_cached = cache_key in self._cache
+        if cache_key not in self._cache:
+            self._cache[cache_key] = self.service.profile_metric_values(
+                self.scope,
+                window,
+                limit=self.settings.max_trace_candidates,
+            )
         return {
-            "metrics": sorted(set(catalog.values())),
-            "sample_limit": 3,
-            "note": "Metric discovery sampled at most three traces and did not scan the Log Stream.",
+            "cached": was_cached,
+            **self._cache[cache_key],
+            "note": (
+                "This is one bounded recent sample from the selected Log Stream, "
+                "not an exhaustive stream or organization scan."
+            ),
         }
 
     @log(span_type="tool", name="galileo.query_metric_trend")

@@ -76,6 +76,16 @@ class GuidedWorkflowTests(unittest.TestCase):
         opening = select_use_case_from_menu("1").opening_request
         self.assertIn("above-threshold", opening)
 
+    def test_quality_workflow_requires_populated_metric_evidence(self) -> None:
+        opening = find_use_case("quality-drop").opening_request
+        self.assertIn("actual numeric metric coverage", opening)
+        self.assertIn("only a populated quality metric", opening)
+        self.assertIn("metric_values_examined", SYSTEM_PROMPT)
+        self.assertIn("candidates_in_time_window", SYSTEM_PROMPT)
+        self.assertIn("candidates_examined", SYSTEM_PROMPT)
+        self.assertIn("explicit narrower window", SYSTEM_PROMPT)
+        self.assertIn("cannot change inside an active session", SYSTEM_PROMPT)
+
     def test_demo_options_have_presenter_ready_steps(self) -> None:
         keys = [option.key for option in DEMO_OPTIONS]
         self.assertEqual(len(keys), len(set(keys)))
