@@ -205,9 +205,16 @@ The recommended setup installs
 - Deny destructive requests targeting Galileo resources.
 - Observe prompt-injection language found in inspected traces.
 
-The setup is safe to rerun. Matching controls and policy associations are
-reused, while an unexpected control with the same name is left unchanged and
-reported for review.
+The setup attaches the controls to the versioned policy, associates that policy
+with the EvalOps Agent, and directly binds every starter control to the
+`EVALOPS_LOG_STREAM` telemetry Log Stream. This is the stream containing the
+agent's controlled LLM and tool steps; `GALILEO_LOG_STREAM` remains the source
+stream being investigated. `evalops doctor` verifies the policy, direct Log
+Stream attachments, and a target-bound runtime evaluation.
+
+Setup is safe to rerun. Matching controls, policy associations, and target
+bindings are reused, while an unexpected control with the same name is left
+unchanged and reported for review.
 
 The interactive **Build and simulate an Agent Control** workflow can validate
 new regex controls, preview their behavior against inspected traces, and

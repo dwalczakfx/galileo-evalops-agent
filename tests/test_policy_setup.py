@@ -48,6 +48,7 @@ class FakeControlService:
         self.create_control_calls = 0
         self.create_policy_calls = 0
         self.refresh_calls = 0
+        self.target_bindings: dict[tuple[str, str], set[int]] = {}
 
     def validate_control(self, definition):
         return {"success": True}
@@ -98,6 +99,20 @@ class FakeControlService:
         self.agent_policy_ids.add(policy_id)
         return {"success": True}
 
+    def bind_control_to_target(self, *, control_id, target_type, target_id):
+        self.target_bindings.setdefault((target_type, target_id), set()).add(control_id)
+        return {"success": True}
+
+    def list_controls_for_target(self, *, target_type, target_id, limit):
+        ids = self.target_bindings.get((target_type, target_id), set())
+        return {
+            "controls": [
+                {"id": item["id"], "name": item["name"]}
+                for item in self.controls.values()
+                if item["id"] in ids
+            ]
+        }
+
     def refresh_runtime_controls(self):
         self.refresh_calls += 1
         return []
@@ -134,6 +149,12 @@ class StarterPolicyInstallerTests(unittest.TestCase):
         self.assertEqual(service.create_control_calls, len(STARTER_CONTROLS))
         self.assertEqual(service.create_policy_calls, 1)
         self.assertEqual(len(service.policies[result["policy_id"]]), len(STARTER_CONTROLS))
+        self.assertEqual(
+            len(service.target_bindings[("log_stream", "telemetry-id")]),
+            len(STARTER_CONTROLS),
+        )
+        self.assertEqual(result["target_name"], "evalops-agent")
+        self.assertEqual(result["target_attachment_count"], len(STARTER_CONTROLS))
         self.assertEqual(service.refresh_calls, 1)
 
     def test_rerun_reuses_matching_controls_and_policy(self) -> None:
@@ -150,6 +171,10 @@ class StarterPolicyInstallerTests(unittest.TestCase):
         self.assertEqual(service.create_control_calls, len(STARTER_CONTROLS))
         self.assertEqual(service.create_policy_calls, 1)
         self.assertEqual(len(second_result["reused_controls"]), len(STARTER_CONTROLS))
+        self.assertEqual(
+            len(service.target_bindings[("log_stream", "telemetry-id")]),
+            len(STARTER_CONTROLS),
+        )
 
     def test_existing_name_with_different_definition_is_never_attached(self) -> None:
         service = FakeControlService()

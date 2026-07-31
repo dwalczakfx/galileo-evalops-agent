@@ -207,6 +207,37 @@ class AgentControlService:
             self.settings.max_output_chars,
         )
 
+    def bind_control_to_target(
+        self,
+        *,
+        control_id: int,
+        target_type: str,
+        target_id: str,
+    ) -> dict[str, Any]:
+        """Idempotently attach an existing control to one exact runtime target."""
+
+        async def bind() -> dict[str, Any]:
+            async with agent_control.AgentControlClient(
+                base_url=self.settings.agent_control_url,
+                api_key=self.settings.galileo_api_key,
+                api_key_header=self.settings.agent_control_api_key_header,
+                runtime_auth_mode=self.settings.agent_control_runtime_auth_mode,
+            ) as client:
+                return await agent_control.control_bindings.upsert_control_binding_by_key(
+                    client,
+                    target_type=target_type,
+                    target_id=target_id,
+                    control_id=control_id,
+                    enabled=True,
+                )
+
+        result = _run_async(bind())
+        return sanitize(
+            result,
+            self.settings.secret_values(),
+            self.settings.max_output_chars,
+        )
+
     def list_effective_controls(
         self,
         *,

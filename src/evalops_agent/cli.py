@@ -232,6 +232,43 @@ def run_doctor(settings: Settings, service: GalileoService, args: argparse.Names
         print("  Agent Control authentication: ✓")
         print("  EvalOps Agent registration: ✓")
         if scope.telemetry_stream_id:
+            starter_names = {spec.name for spec in STARTER_CONTROLS}
+            try:
+                attached = control_service.list_controls_for_target(
+                    target_type="log_stream",
+                    target_id=scope.telemetry_stream_id,
+                    limit=20,
+                )
+            except Exception as exc:
+                safe_error = sanitize(str(exc), settings.secret_values(), 500)
+                print(f"  Agent Control Log Stream attachments: failed ({safe_error})")
+                ready = False
+            else:
+                attached_controls = (
+                    attached.get("controls", [])
+                    if isinstance(attached, dict)
+                    else []
+                )
+                attached_names = {
+                    str(item.get("name"))
+                    for item in attached_controls
+                    if isinstance(item, dict) and item.get("name")
+                }
+                attached_count = len(starter_names & attached_names)
+                if starter_names.issubset(attached_names):
+                    print(
+                        "  Agent Control Log Stream attachments: "
+                        f"{attached_count}/{len(starter_names)} on "
+                        f"{scope.telemetry_stream_name} ✓"
+                    )
+                else:
+                    print(
+                        "  Agent Control Log Stream attachments: "
+                        f"{attached_count}/{len(starter_names)} on "
+                        f"{scope.telemetry_stream_name} — run setup "
+                        "--with-agent-control"
+                    )
+                    ready = False
             try:
                 effective = control_service.list_effective_controls(
                     agent_name=settings.agent_name,
@@ -253,7 +290,6 @@ def run_doctor(settings: Settings, service: GalileoService, args: argparse.Names
                     for item in controls
                     if isinstance(item, dict) and item.get("name")
                 }
-                starter_names = {spec.name for spec in STARTER_CONTROLS}
                 starter_count = len(starter_names & names)
                 if starter_names.issubset(names):
                     print(
@@ -345,6 +381,10 @@ def run_setup(
     print(f"Policy created:     {'yes' if result['policy_created'] else 'no, reused'}")
     print(f"Controls created:   {len(result['created_controls'])}")
     print(f"Controls reused:    {len(result['reused_controls'])}")
+    print(
+        f"Target attachments: {result['target_attachment_count']} verified on "
+        f"{result['target_name']}"
+    )
     print(f"Effective controls: {result['effective_control_count']} verified")
     print("LLM/evaluator calls: 0")
     return 0
