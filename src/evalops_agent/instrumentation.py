@@ -11,6 +11,7 @@ from galileo import galileo_context
 from . import __version__
 from .config import Settings
 from .models import Scope
+from .policy_setup import CONTROL_STEPS
 
 
 class TelemetryUploadError(RuntimeError):
@@ -65,6 +66,7 @@ class InstrumentedSession:
                 observability_sink_name="registered",
                 target_type="log_stream",
                 target_id=self.scope.telemetry_stream_id,
+                steps=CONTROL_STEPS,
             )
             self._agent_control_initialized = True
         except Exception:

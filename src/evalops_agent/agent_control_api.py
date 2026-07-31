@@ -49,6 +49,19 @@ class AgentControlService:
             self.settings.max_output_chars,
         )
 
+    def get_agent(self, agent_name: str) -> dict[str, Any]:
+        result = _run_async(
+            agent_control.get_agent(
+                agent_name=agent_name,
+                **self._kwargs(),
+            )
+        )
+        return sanitize(
+            result,
+            self.settings.secret_values(),
+            self.settings.max_output_chars,
+        )
+
     def list_controls_for_target(
         self,
         *,
@@ -71,6 +84,31 @@ class AgentControlService:
             self.settings.max_output_chars,
         )
 
+    def list_controls_by_name(self, name: str, limit: int = 20) -> dict[str, Any]:
+        result = _run_async(
+            agent_control.list_controls(
+                name=name,
+                limit=min(limit, 20),
+                include_attachments=True,
+                **self._kwargs(),
+            )
+        )
+        return sanitize(
+            result,
+            self.settings.secret_values(),
+            self.settings.max_output_chars,
+        )
+
+    def get_control(self, control_id: int) -> dict[str, Any]:
+        result = _run_async(
+            agent_control.get_control(control_id=control_id, **self._kwargs())
+        )
+        return sanitize(
+            result,
+            self.settings.secret_values(),
+            self.settings.max_output_chars,
+        )
+
     def validate_control(self, definition: dict[str, Any]) -> dict[str, Any]:
         result = _run_async(
             agent_control.validate_control_data(
@@ -78,6 +116,129 @@ class AgentControlService:
                 **self._kwargs(),
             )
         )
+        return sanitize(
+            result,
+            self.settings.secret_values(),
+            self.settings.max_output_chars,
+        )
+
+    def create_control(self, *, name: str, definition: dict[str, Any]) -> dict[str, Any]:
+        result = _run_async(
+            agent_control.create_control(
+                name=name,
+                data=definition,
+                **self._kwargs(),
+            )
+        )
+        return sanitize(
+            result,
+            self.settings.secret_values(),
+            self.settings.max_output_chars,
+        )
+
+    def get_agent_policy_ids(self, agent_name: str) -> dict[str, Any]:
+        result = _run_async(
+            agent_control.get_agent_policies(
+                agent_name=agent_name,
+                **self._kwargs(),
+            )
+        )
+        return sanitize(
+            result,
+            self.settings.secret_values(),
+            self.settings.max_output_chars,
+        )
+
+    def get_policy_control_ids(self, policy_id: int) -> dict[str, Any]:
+        result = _run_async(
+            agent_control.list_policy_controls(
+                policy_id=policy_id,
+                **self._kwargs(),
+            )
+        )
+        return sanitize(
+            result,
+            self.settings.secret_values(),
+            self.settings.max_output_chars,
+        )
+
+    def create_policy(self, name: str) -> dict[str, Any]:
+        async def create() -> dict[str, Any]:
+            async with agent_control.AgentControlClient(
+                base_url=self.settings.agent_control_url,
+                api_key=self.settings.galileo_api_key,
+                api_key_header=self.settings.agent_control_api_key_header,
+                runtime_auth_mode=self.settings.agent_control_runtime_auth_mode,
+            ) as client:
+                return await agent_control.policies.create_policy(client, name)
+
+        result = _run_async(create())
+        return sanitize(
+            result,
+            self.settings.secret_values(),
+            self.settings.max_output_chars,
+        )
+
+    def add_control_to_policy(self, *, policy_id: int, control_id: int) -> dict[str, Any]:
+        result = _run_async(
+            agent_control.add_control_to_policy(
+                policy_id=policy_id,
+                control_id=control_id,
+                **self._kwargs(),
+            )
+        )
+        return sanitize(
+            result,
+            self.settings.secret_values(),
+            self.settings.max_output_chars,
+        )
+
+    def add_policy_to_agent(self, *, agent_name: str, policy_id: int) -> dict[str, Any]:
+        result = _run_async(
+            agent_control.add_agent_policy(
+                agent_name=agent_name,
+                policy_id=policy_id,
+                **self._kwargs(),
+            )
+        )
+        return sanitize(
+            result,
+            self.settings.secret_values(),
+            self.settings.max_output_chars,
+        )
+
+    def list_effective_controls(
+        self,
+        *,
+        agent_name: str,
+        target_type: str,
+        target_id: str,
+    ) -> dict[str, Any]:
+        async def list_effective() -> dict[str, Any]:
+            async with agent_control.AgentControlClient(
+                base_url=self.settings.agent_control_url,
+                api_key=self.settings.galileo_api_key,
+                api_key_header=self.settings.agent_control_api_key_header,
+                runtime_auth_mode=self.settings.agent_control_runtime_auth_mode,
+            ) as client:
+                return await agent_control.agents.list_agent_controls(
+                    client,
+                    agent_name,
+                    rendered_state="rendered",
+                    enabled_state="enabled",
+                    target_type=target_type,
+                    target_id=target_id,
+                )
+
+        result = _run_async(list_effective())
+        return sanitize(
+            result,
+            self.settings.secret_values(),
+            self.settings.max_output_chars,
+        )
+
+    def refresh_runtime_controls(self) -> list[dict[str, Any]]:
+        result = agent_control.refresh_controls() or []
         return sanitize(
             result,
             self.settings.secret_values(),

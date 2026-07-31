@@ -42,6 +42,7 @@ class EvalOpsAgent:
         return user_input
 
     @log(span_type="agent", name="evalops_agent_turn")
+    @control(step_name="evalops_agent_response")
     def chat_turn(self, user_input: str) -> str:
         self.messages.append({"role": "user", "content": user_input})
         tool_calls_used = 0

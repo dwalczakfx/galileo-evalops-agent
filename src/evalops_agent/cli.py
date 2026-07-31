@@ -14,6 +14,7 @@ from .examples import print_starter_requests
 from .galileo_api import GalileoService
 from .instrumentation import InstrumentedSession, TelemetryUploadError
 from .models import OperationPreview, Scope
+from .policy_setup import STARTER_CONTROLS, StarterPolicyInstaller
 from .presentation import (
     DEMO_OPTIONS,
     DEMO_OPTIONS_BY_KEY,
@@ -162,14 +163,56 @@ def run_doctor(settings: Settings, service: GalileoService, args: argparse.Names
     else:
         print(f"  telemetry Log Stream: {scope.telemetry_stream_name} — run setup")
         ready = False
+    control_service = AgentControlService(settings)
     try:
-        AgentControlService(settings).list_agents(limit=1)
+        control_service.get_agent(settings.agent_name)
     except Exception as exc:
         safe_error = sanitize(str(exc), settings.secret_values(), 500)
-        print(f"  Agent Control authentication: failed ({safe_error})")
+        print(f"  Agent Control registration/authentication: failed ({safe_error})")
         ready = False
     else:
         print("  Agent Control authentication: ✓")
+        print("  EvalOps Agent registration: ✓")
+        if scope.telemetry_stream_id:
+            try:
+                effective = control_service.list_effective_controls(
+                    agent_name=settings.agent_name,
+                    target_type="log_stream",
+                    target_id=scope.telemetry_stream_id,
+                )
+            except Exception as exc:
+                safe_error = sanitize(str(exc), settings.secret_values(), 500)
+                print(f"  Effective Agent Controls: failed ({safe_error})")
+                ready = False
+            else:
+                controls = (
+                    effective.get("controls", [])
+                    if isinstance(effective, dict)
+                    else []
+                )
+                names = {
+                    str(item.get("name"))
+                    for item in controls
+                    if isinstance(item, dict) and item.get("name")
+                }
+                starter_names = {spec.name for spec in STARTER_CONTROLS}
+                starter_count = len(starter_names & names)
+                if starter_names.issubset(names):
+                    print(
+                        f"  Agent Control starter policy: {starter_count}/"
+                        f"{len(starter_names)} effective ✓"
+                    )
+                elif names:
+                    print(
+                        f"  Effective Agent Controls: {len(names)} custom; starter "
+                        f"coverage {starter_count}/{len(starter_names)}"
+                    )
+                else:
+                    print(
+                        "  Effective Agent Controls: none — run setup "
+                        "--with-agent-control"
+                    )
+                    ready = False
     if settings.env_file.exists():
         print(f"  environment file: {settings.env_file} ✓")
     else:
@@ -180,6 +223,50 @@ def run_doctor(settings: Settings, service: GalileoService, args: argparse.Names
     print("  organization trace scan: not performed")
     print(f"\nDeployment readiness: {'READY' if ready else 'ACTION REQUIRED'}")
     return 0 if ready else 1
+
+
+def run_setup(
+    settings: Settings,
+    service: GalileoService,
+    args: argparse.Namespace,
+) -> int:
+    approval = ApprovalGate(dry_run=args.dry_run, assume_yes=args.yes)
+    scope = select_scope(
+        settings,
+        service,
+        project_arg=args.project,
+        stream_arg=args.log_stream,
+        non_interactive=args.yes,
+    )
+    scope = ensure_telemetry_stream(scope, service, approval)
+    print_scope(scope, settings)
+    if not args.with_agent_control:
+        print(
+            "\nTelemetry setup complete. To register the agent and install the "
+            "recommended Agent Control starter policy, run:\n"
+            "  python3 -m evalops_agent setup --with-agent-control"
+        )
+        return 0
+
+    installer = StarterPolicyInstaller(settings, scope, approval)
+    plan = installer.prepare()
+    with InstrumentedSession(
+        settings,
+        scope,
+        "Galileo EvalOps Agent installation",
+    ):
+        result = installer.install(plan)
+
+    print("\nAgent Control installation complete")
+    print("-----------------------------------")
+    print(f"Agent:              {result['agent_name']}")
+    print(f"Policy:             {result['policy_name']} (ID {result['policy_id']})")
+    print(f"Policy created:     {'yes' if result['policy_created'] else 'no, reused'}")
+    print(f"Controls created:   {len(result['created_controls'])}")
+    print(f"Controls reused:    {len(result['reused_controls'])}")
+    print(f"Effective controls: {result['effective_control_count']} verified")
+    print("LLM/evaluator calls: 0")
+    return 0
 
 
 def _run_agent_request(
@@ -439,7 +526,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-y", "--yes", action="store_true", help="Accept selections and write previews.")
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser("doctor", help="Run read-only configuration and connectivity checks.")
-    subparsers.add_parser("setup", help="Select a scope and create the telemetry stream if approved.")
+    setup_parser = subparsers.add_parser(
+        "setup",
+        help="Create telemetry and optionally install the Agent Control starter policy.",
+    )
+    setup_parser.add_argument(
+        "--with-agent-control",
+        action="store_true",
+        help=(
+            "Register the agent and install the versioned Agent Control starter "
+            "policy after a write preview."
+        ),
+    )
     subparsers.add_parser("chat", help="Start the conversational EvalOps operator.")
     demo_parser = subparsers.add_parser(
         "demo",
@@ -480,17 +578,7 @@ def main(argv: list[str] | None = None) -> None:
         if command == "doctor":
             code = run_doctor(settings, service, args)
         elif command == "setup":
-            approval = ApprovalGate(dry_run=args.dry_run, assume_yes=args.yes)
-            scope = select_scope(
-                settings,
-                service,
-                project_arg=args.project,
-                stream_arg=args.log_stream,
-                non_interactive=args.yes,
-            )
-            scope = ensure_telemetry_stream(scope, service, approval)
-            print_scope(scope, settings)
-            code = 0
+            code = run_setup(settings, service, args)
         elif command == "demo":
             code = run_demo_presentation(settings, service, args)
         elif command == "demo-seed":

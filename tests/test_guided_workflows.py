@@ -52,6 +52,11 @@ class GuidedWorkflowTests(unittest.TestCase):
         self.assertEqual(args.scenario, "quality-drop")
         self.assertTrue(args.print_only)
 
+    def test_setup_accepts_agent_control_install_option(self) -> None:
+        args = build_parser().parse_args(["setup", "--with-agent-control"])
+        self.assertEqual(args.command, "setup")
+        self.assertTrue(args.with_agent_control)
+
     def test_chat_intro_explains_purpose_and_safety_before_menu(self) -> None:
         output = StringIO()
         with redirect_stdout(output):

@@ -75,7 +75,12 @@ class InstrumentationTests(unittest.TestCase):
         init_control.assert_called_once()
         self.assertEqual(init_control.call_args.kwargs["target_id"], "telemetry-id")
         self.assertEqual(init_control.call_args.kwargs["target_type"], "log_stream")
-        self.assertEqual(init_control.call_args.kwargs["agent_version"], "0.3.0")
+        self.assertEqual(init_control.call_args.kwargs["agent_version"], "0.4.0")
+        step_names = {
+            step["name"] for step in init_control.call_args.kwargs["steps"]
+        }
+        self.assertIn("evalops_user_request", step_names)
+        self.assertIn("evalops_agent_response", step_names)
         context.start_session.assert_called_once()
         context.clear_session.assert_called_once()
         self.assertEqual(logger.flush.call_count, 2)

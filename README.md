@@ -73,15 +73,34 @@ release. `pyproject.toml` also applies major-version upper bounds.
 
 ## Start safely
 
-Create the dedicated telemetry Log Stream after reviewing the write preview:
+Create the dedicated telemetry Log Stream, register the agent, and install its
+versioned Agent Control starter policy after reviewing the write previews:
 
 ```bash
-python3 -m evalops_agent setup
+python3 -m evalops_agent setup --with-agent-control
 ```
 
+The installer validates every control with Galileo before writing. It creates
+or reuses four controls, groups them in a real Agent Control policy, associates
+that policy with `EVALOPS_AGENT_NAME`, refreshes the runtime, and verifies that
+all four controls are effective for the dedicated telemetry Log Stream. It is
+safe to rerun: matching resources and associations are reused, while a
+same-name control with different logic stops installation instead of being
+overwritten. Installation performs no LLM generation or evaluator calls.
+
+Preview the policy operation without registering the agent or writing Agent
+Control resources:
+
+```bash
+python3 -m evalops_agent --dry-run setup --with-agent-control
+```
+
+To create only the telemetry Log Stream and manage policies manually, use
+`python3 -m evalops_agent setup`.
+
 Then run the read-only deployment check. It verifies the exact Galileo scope,
-dedicated telemetry stream, local environment path, and Agent Control
-authentication without scanning organization traces:
+dedicated telemetry stream, local environment path, exact agent registration,
+and effective Agent Controls without scanning organization traces:
 
 ```bash
 python3 -m evalops_agent doctor
@@ -251,15 +270,15 @@ The management limits can be changed with
 ## Galileo instrumentation
 
 - One lazily created Galileo session per CLI conversation that runs a request
-- A controlled request trace plus an agent execution trace per user turn
+- Controlled request and response boundaries plus an agent execution trace per user turn
 - Tool and OpenAI LLM spans nested under the agent execution trace
 - `@log(span_type="tool")` on every Galileo management operation
 - OpenAI calls captured by Galileo's OpenAI integration
 - Immediate flush after every completed user turn, with visible upload status
 - Visible telemetry errors instead of silently empty sessions
 - Agent Control bridge registered against the dedicated telemetry Log Stream
-- `@control()` on user requests, detailed trace inspection, dataset writes, and
-  experiment execution, plus advanced environment and Agent Control writes
+- `@control()` on user requests and responses, detailed trace inspection,
+  dataset writes, experiment execution, and advanced management writes
 - Explicit handling of DENY and bounded STEER decisions
 - Agent Control policy refresh and observability resources shut down on exit
 - Final Galileo flush, session cleanup, and auth-environment restoration on exit
@@ -271,11 +290,21 @@ contamination.
 
 ## Agent Control policies
 
-The decorators define decision boundaries; policies remain centrally managed.
-For the demo, bind controls to the `evalops-agent` Log Stream and use the exact
-step names:
+The decorators define decision boundaries and policies remain centrally
+managed in Galileo. The recommended installation command creates and attaches
+`<EVALOPS_AGENT_NAME>-starter-safety-v1` with these server-validated controls:
+
+- DENY explicit requests to expose credentials or system prompts.
+- DENY responses that resemble credential disclosure.
+- DENY destructive requests targeting Galileo resources.
+- OBSERVE prompt-injection language in inspected trace content.
+
+The starter policy is intentionally conservative and versioned. Additional
+controls can be proposed and simulated through the interactive Agent Control
+builder. Controls can target these exact runtime step names:
 
 - `evalops_user_request`
+- `evalops_agent_response`
 - `inspect_production_trace`
 - `analyze_regression_coverage`
 - `write_regression_dataset`
@@ -284,12 +313,9 @@ step names:
 - `bootstrap_galileo_environment`
 - `write_agent_control_policy`
 
-Suggested policies:
-
-- DENY requests to expose credentials or system prompts.
-- DENY destructive Galileo operations.
-- STEER write requests that do not identify the selected project and resource.
-- OBSERVE when trace content appears to contain prompt-injection instructions.
+The installer does not replace or edit existing policies. A matching starter
+policy is reused; a conflicting same-name control fails closed for administrator
+review.
 
 ## Deployment
 
@@ -306,9 +332,9 @@ python3 -m evalops_agent chat
 Container deployment:
 
 ```bash
-docker build -t galileo-evalops-agent:0.3.0 .
+docker build -t galileo-evalops-agent:0.4.0 .
 docker run --rm -it --env-file .env \
-  galileo-evalops-agent:0.3.0 chat
+  galileo-evalops-agent:0.4.0 chat
 ```
 
 The container runs as an unprivileged user and does not contain `.env`, tests,
