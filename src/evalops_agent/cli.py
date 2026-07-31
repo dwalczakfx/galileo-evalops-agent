@@ -26,7 +26,12 @@ from .presentation import (
 )
 from .security import sanitize
 from .tools import ToolRegistry
-from .use_cases import GUIDED_USE_CASES, GUIDED_USE_CASES_BY_KEY, print_use_case_menu
+from .use_cases import (
+    find_use_case,
+    find_workflow_group,
+    print_use_case_menu,
+    select_use_case_from_menu,
+)
 
 
 def _confirm(prompt: str, default_yes: bool = True) -> bool:
@@ -395,6 +400,16 @@ def _run_presentation_steps(
     )
 
 
+def _is_menu_selection(user_input: str, *, menu_open: bool) -> bool:
+    if not menu_open:
+        return False
+    return bool(
+        user_input.isdigit()
+        or find_use_case(user_input) is not None
+        or find_workflow_group(user_input) is not None
+    )
+
+
 def run_chat(
     settings: Settings,
     service: GalileoService,
@@ -434,9 +449,10 @@ def run_chat(
         print_app_intro(scope)
         print_use_case_menu()
         print(
-            "\nChoose a workflow number, type your own request, or enter "
-            "'usecases', 'examples', or 'quit'."
+            "\nChoose a topic, type your own request, or enter "
+            "'menu', 'examples', or 'quit'."
         )
+        menu_open = True
         while True:
             try:
                 user_input = input("\nevalops> ").strip()
@@ -449,26 +465,43 @@ def run_chat(
                 break
             if user_input.lower() in {"usecases", "workflows", "menu"}:
                 print_use_case_menu()
+                menu_open = True
                 continue
             if user_input.lower() == "examples":
                 print_starter_requests()
                 continue
-            if user_input.isdigit():
-                index = int(user_input) - 1
-                if int(user_input) == 0:
+            use_case = None
+            if menu_open:
+                if user_input == "0":
                     print("Type your own EvalOps question at the prompt.")
+                    menu_open = False
                     continue
-                if 0 <= index < len(GUIDED_USE_CASES):
-                    use_case = GUIDED_USE_CASES[index]
-                    print(f"\nStarting workflow: {use_case.title}")
-                    user_input = use_case.opening_request
+                if _is_menu_selection(user_input, menu_open=menu_open):
+                    use_case = select_use_case_from_menu(user_input)
+                    if use_case is None:
+                        print_use_case_menu()
+                        continue
                 else:
-                    print(f"Choose a workflow from 0 to {len(GUIDED_USE_CASES)}.")
-                    continue
-            elif user_input.lower() in GUIDED_USE_CASES_BY_KEY:
-                use_case = GUIDED_USE_CASES_BY_KEY[user_input.lower()]
+                    menu_open = False
+            elif not user_input.isdigit():
+                use_case = find_use_case(user_input)
+                group = find_workflow_group(user_input)
+                if use_case is None and group is not None:
+                    use_case = select_use_case_from_menu(user_input)
+                    if use_case is None:
+                        print_use_case_menu()
+                        menu_open = True
+                        continue
+            if use_case is not None:
                 print(f"\nStarting workflow: {use_case.title}")
                 user_input = use_case.opening_request
+                menu_open = False
+            elif menu_open:
+                continue
+            else:
+                # Once a workflow or free-form conversation starts, numbers are
+                # answers to the agent (thresholds, hours, limits), not menu choices.
+                menu_open = False
             _run_agent_request(agent, telemetry, scope, user_input)
     return 0
 

@@ -26,6 +26,28 @@ class FakeService:
             "exhaustive": False,
         }
 
+    def search_metric_traces(
+        self,
+        scope,
+        window,
+        metric,
+        comparison,
+        threshold,
+        limit,
+    ):
+        return {
+            "traces": [
+                {"id": f"trace-{index}", metric: threshold + 0.1}
+                for index in range(limit)
+            ],
+            "candidates_examined": limit,
+            "candidates_in_time_window": limit,
+            "candidate_limit": 50,
+            "search_mode": "bounded_recent_sample",
+            "exhaustive": False,
+            "comparison": comparison,
+        }
+
     def get_trace_details(self, scope, trace_id, span_limit=50):
         return {"trace": {"id": trace_id}, "spans": []}
 
@@ -87,6 +109,18 @@ class ToolTests(unittest.TestCase):
             hours=24,
             limit=99,
         )
+        self.assertEqual(result["applied_limit"], 20)
+        self.assertEqual(result["count"], 20)
+
+    def test_high_cost_search_uses_above_direction_and_is_capped(self) -> None:
+        result = self.registry.search_metric_traces(
+            metric="cost",
+            comparison="above",
+            threshold=0.5,
+            hours=24,
+            limit=99,
+        )
+        self.assertEqual(result["comparison"], "above")
         self.assertEqual(result["applied_limit"], 20)
         self.assertEqual(result["count"], 20)
 

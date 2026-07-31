@@ -326,6 +326,27 @@ class GalileoService:
         threshold: float,
         limit: int,
     ) -> dict[str, Any]:
+        return self.search_metric_traces(
+            scope,
+            window,
+            metric=metric,
+            comparison="below",
+            threshold=threshold,
+            limit=limit,
+        )
+
+    def search_metric_traces(
+        self,
+        scope: Scope,
+        window: TimeWindow,
+        *,
+        metric: str,
+        comparison: str,
+        threshold: float,
+        limit: int,
+    ) -> dict[str, Any]:
+        if comparison not in {"below", "above"}:
+            raise ValueError("comparison must be 'below' or 'above'.")
         metric_column, _ = self.resolve_metric_column(scope, metric)
         # The server-side metric filter currently returns an internal error for
         # some hosted streams. Keep the operation cost-predictable by reading one
@@ -348,16 +369,25 @@ class GalileoService:
                 continue
             in_window += 1
             score = self._metric_score(data.get("metric_info"), metric_column)
-            if score is None or score >= threshold:
+            if score is None:
                 continue
-            data["selected_metric"] = {"name": metric, "score": score}
+            if comparison == "below" and score >= threshold:
+                continue
+            if comparison == "above" and score <= threshold:
+                continue
+            data["selected_metric"] = {
+                "name": metric,
+                "score": score,
+                "comparison": comparison,
+                "threshold": threshold,
+            }
             matches.append(
                 (
                     score,
                     sanitize(data, self.settings.secret_values(), 2500),
                 )
             )
-        matches.sort(key=lambda item: item[0])
+        matches.sort(key=lambda item: item[0], reverse=comparison == "above")
         return {
             "traces": [item[1] for item in matches[:limit]],
             "candidates_examined": len(records),
@@ -365,6 +395,7 @@ class GalileoService:
             "candidate_limit": self.settings.max_trace_candidates,
             "search_mode": "bounded_recent_sample",
             "exhaustive": False,
+            "comparison": comparison,
         }
 
     @staticmethod

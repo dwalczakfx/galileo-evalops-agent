@@ -5,15 +5,20 @@ from contextlib import redirect_stdout
 from io import StringIO
 from unittest.mock import patch
 
-from evalops_agent.cli import build_parser, main, print_app_intro
+from evalops_agent.cli import _is_menu_selection, build_parser, main, print_app_intro
 from evalops_agent.models import Scope
 from evalops_agent.presentation import (
     DEMO_OPTIONS,
     choose_demo_option,
 )
+from evalops_agent.prompts import SYSTEM_PROMPT
 from evalops_agent.use_cases import (
     GUIDED_USE_CASES,
+    WORKFLOW_GROUPS,
     choose_use_case,
+    find_use_case,
+    print_use_case_menu,
+    select_use_case_from_menu,
 )
 
 
@@ -29,6 +34,47 @@ class GuidedWorkflowTests(unittest.TestCase):
 
     def test_custom_question_returns_no_predefined_use_case(self) -> None:
         self.assertIsNone(choose_use_case(lambda _: "0"))
+
+    def test_top_menu_groups_capabilities_into_three_topics(self) -> None:
+        output = StringIO()
+        with redirect_stdout(output):
+            print_use_case_menu()
+        rendered = output.getvalue()
+        self.assertEqual(len(WORKFLOW_GROUPS), 3)
+        self.assertIn("Recommend what I should check first", rendered)
+        self.assertIn("Investigate production quality", rendered)
+        self.assertNotIn("13.", rendered)
+
+    def test_group_selection_opens_a_smaller_topic_menu(self) -> None:
+        selected = select_use_case_from_menu("2", lambda _: "3")
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.key, "signal-candidates")
+
+    def test_workflow_title_is_a_supported_alias(self) -> None:
+        selected = find_use_case("Investigate a Galileo Signal")
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.key, "signal-handoff")
+
+    def test_numeric_conversation_answer_is_not_reinterpreted_as_menu(self) -> None:
+        self.assertTrue(_is_menu_selection("2", menu_open=True))
+        self.assertFalse(_is_menu_selection("20", menu_open=False))
+
+    def test_recommended_start_does_not_require_an_example(self) -> None:
+        selected = select_use_case_from_menu("1")
+        self.assertIn("do not need to provide an example", selected.opening_request.lower())
+        self.assertIn("run recommended", selected.opening_request.lower())
+        self.assertIn("under 180 words", selected.opening_request.lower())
+
+    def test_zero_result_guidance_broadens_threshold_in_correct_direction(self) -> None:
+        self.assertIn("raising the threshold", SYSTEM_PROMPT)
+        self.assertIn("lowering the threshold", SYSTEM_PROMPT)
+        self.assertIn("candidates examined", SYSTEM_PROMPT)
+
+    def test_risk_metrics_use_high_as_failure_direction(self) -> None:
+        self.assertIn("prompt\ninjection", SYSTEM_PROMPT)
+        self.assertIn("risk direction", SYSTEM_PROMPT)
+        opening = select_use_case_from_menu("1").opening_request
+        self.assertIn("above-threshold", opening)
 
     def test_demo_options_have_presenter_ready_steps(self) -> None:
         keys = [option.key for option in DEMO_OPTIONS]

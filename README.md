@@ -136,24 +136,29 @@ evalops chat --select-scope
 
 ## Guided workflows
 
-The chat menu provides ready-to-use workflows for common tasks:
+The chat starts with four clear choices instead of displaying every capability
+at once:
 
-1. Investigate a quality drop.
-2. Find and explain low-quality traces.
-3. Build a regression dataset.
-4. Review or compare experiments.
-5. Get an EvalOps project briefing.
-6. Prepare a bounded experiment.
-7. Run Galileo Project Doctor.
-8. Find production-to-dataset coverage gaps.
-9. Evaluate release readiness.
-10. Optimize evaluation cost and budget.
-11. Build and simulate an Agent Control.
-12. Compare or bootstrap Galileo environments.
-13. Investigate a Galileo Signal.
+1. Get a recommended first check.
+2. Investigate production quality.
+3. Improve evaluations and releases.
+4. Govern and manage Galileo.
 
-The agent discovers the relevant resources before asking you to choose one, so
-these workflows do not require Galileo IDs.
+Selecting a topic opens a smaller menu with the relevant workflows. For
+example, **Investigate production quality** includes quality changes,
+low-quality trace triage, proactive Signal candidates, and handoff from a known
+Signal. Type `menu` at any time to return to the topics.
+
+The recommended start discovers the metrics that actually exist on the selected
+Log Stream, proposes three useful checks, marks one as Recommended, and supplies
+safe starting defaults. You do not need to bring an example, metric, threshold,
+or Signal name.
+
+Once a workflow starts, short answers such as `yes`, `1h`, `0.5`, or `20` are
+passed to the conversation instead of being interpreted as menu selections.
+The agent asks for one decision at a time, offers an explanation and a default,
+and lets you accept or change it. Exact workflow titles and keys are also
+accepted.
 
 ## Demo mode
 
@@ -287,9 +292,9 @@ evalops --yes --project my-project demo-seed
 ## Docker
 
 ```bash
-docker build -t galileo-evalops-agent:0.4.1 .
+docker build -t galileo-evalops-agent:0.5.0 .
 docker run --rm -it --env-file .env \
-  galileo-evalops-agent:0.4.1 chat
+  galileo-evalops-agent:0.5.0 chat
 ```
 
 The image runs as an unprivileged user and does not include `.env`, tests, Git

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import hashlib
+import math
 from typing import Any
 
 from agent_control import ControlSteerError, ControlViolationError, control
@@ -91,7 +92,7 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "search_low_scoring_traces",
-            "description": "Return a bounded set of the lowest-scoring traces for one metric.",
+            "description": "Return a bounded set below a 0–1 normalized quality threshold. Use search_metric_traces for high cost, token, or latency investigations.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -101,6 +102,25 @@ TOOL_SCHEMAS = [
                     "limit": {"type": "integer", "minimum": 1},
                 },
                 "required": ["metric", "threshold", "hours", "limit"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_metric_traces",
+            "description": "Return a bounded recent sample where one metric is below or above a numeric threshold. Use below for quality failures and above for high cost, token use, or latency.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "metric": {"type": "string"},
+                    "comparison": {"type": "string", "enum": ["below", "above"]},
+                    "threshold": {"type": "number"},
+                    "hours": {"type": "integer", "minimum": 1},
+                    "limit": {"type": "integer", "minimum": 1},
+                },
+                "required": ["metric", "comparison", "threshold", "hours", "limit"],
                 "additionalProperties": False,
             },
         },
@@ -548,6 +568,7 @@ class ToolRegistry:
             "list_available_metrics": self.list_available_metrics,
             "query_metric_trend": self.query_metric_trend,
             "search_low_scoring_traces": self.search_low_scoring_traces,
+            "search_metric_traces": self.search_metric_traces,
             "get_trace_details": self.get_trace_details,
             "list_datasets": self.list_datasets,
             "list_experiments": self.list_experiments,
@@ -645,6 +666,55 @@ class ToolRegistry:
         return {
             "window": window.public_dict(),
             "metric": metric,
+            "threshold": threshold,
+            "requested_limit": limit,
+            "applied_limit": bounded_limit,
+            "count": len(traces),
+            "traces": traces,
+            "candidate_search": {
+                key: value
+                for key, value in search_result.items()
+                if key != "traces"
+            },
+        }
+
+    @log(span_type="tool", name="galileo.search_metric_traces")
+    def search_metric_traces(
+        self,
+        metric: str,
+        comparison: str,
+        threshold: float,
+        hours: int,
+        limit: int,
+    ) -> dict[str, Any]:
+        if comparison not in {"below", "above"}:
+            raise ValueError("comparison must be 'below' or 'above'.")
+        if not math.isfinite(threshold):
+            raise ValueError("Metric threshold must be a finite number.")
+        if limit < 1:
+            raise ValueError("Trace limit must be at least one.")
+        if not SAFE_COLUMN_NAME.fullmatch(metric):
+            raise ValueError("Metric name contains unsupported characters or is too long.")
+        bounded_limit = min(limit, self.settings.max_traces_per_query)
+        window = TimeWindow.recent_hours(hours, self.settings.max_lookback_hours)
+        search_result = self.service.search_metric_traces(
+            self.scope,
+            window,
+            metric=metric,
+            comparison=comparison,
+            threshold=threshold,
+            limit=bounded_limit,
+        )
+        traces = search_result["traces"]
+        self.allowed_trace_ids = {
+            str(trace.get("id"))
+            for trace in traces
+            if isinstance(trace, dict) and trace.get("id")
+        }
+        return {
+            "window": window.public_dict(),
+            "metric": metric,
+            "comparison": comparison,
             "threshold": threshold,
             "requested_limit": limit,
             "applied_limit": bounded_limit,
