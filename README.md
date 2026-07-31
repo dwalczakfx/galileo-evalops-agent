@@ -314,7 +314,7 @@ docker run --rm -it --env-file .env \
 The container runs as an unprivileged user and does not contain `.env`, tests,
 Git metadata, or local caches.
 
-GitHub Actions runs the test suite and compilation checks on Python 3.11–3.14
+GitHub Actions runs the test suite and compilation checks on Python 3.12–3.14
 and separately builds both the Python distribution and container image. Before
 publishing:
 
