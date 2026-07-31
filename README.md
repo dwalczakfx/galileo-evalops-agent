@@ -8,9 +8,10 @@ production insights with practical EvalOps workflows: investigating quality
 changes, reviewing traces, building regression datasets, comparing experiments,
 planning evaluation cost, and managing Agent Control guardrails.
 
-The agent guides users through available Galileo projects, Log Streams,
-metrics, datasets, prompts, and experiments. You can work with familiar names
-and guided menus instead of looking up resource IDs.
+The agent starts in the Galileo project and Log Stream configured in `.env`,
+shows that working context clearly, and guides users through its metrics,
+datasets, prompts, and experiments. You can switch scope explicitly and work
+with familiar names instead of looking up resource IDs.
 
 ## Capabilities
 
@@ -72,8 +73,8 @@ Open `.env` and review these core settings:
 | `GALILEO_API_URL` | Galileo API endpoint. |
 | `GALILEO_CONSOLE_URL` | Optional Galileo Console address used for navigation. |
 | `GALILEO_API_KEY` | API key used by Galileo and Agent Control. |
-| `GALILEO_PROJECT` | Default project presented when the agent starts. |
-| `GALILEO_LOG_STREAM` | Default source Log Stream to investigate. |
+| `GALILEO_PROJECT` | Project used automatically when the agent starts. |
+| `GALILEO_LOG_STREAM` | Source Log Stream used automatically for investigations. |
 | `OPENAI_API_KEY` | Key for the configured model endpoint. |
 | `OPENAI_BASE_URL` | Optional OpenAI-compatible endpoint; leave blank for the standard OpenAI API. |
 | `EVALOPS_MODEL` | Model name supported by the configured endpoint. |
@@ -124,6 +125,12 @@ evalops chat
 ```
 
 The CLI presents guided workflows and also accepts free-form EvalOps requests.
+It opens directly in the configured project and source Log Stream and prints
+the active context before the menu. To choose another scope interactively, run:
+
+```bash
+evalops chat --select-scope
+```
 
 ## Guided workflows
 
@@ -199,10 +206,27 @@ publish them after approval.
 
 ## Scope and cost management
 
-Each conversation works within a selected project and source Log Stream. This
-keeps investigations relevant and makes API and evaluation usage predictable.
-Cross-environment comparison is initiated only when a user selects a second
-project.
+Each conversation works within one project and source Log Stream. By default,
+the agent uses `GALILEO_PROJECT` and `GALILEO_LOG_STREAM` without asking you to
+confirm them on every launch. The active scope and query limits are printed
+before the workflow menu.
+
+Override the defaults for one run with exact names:
+
+```bash
+evalops --project my-project --log-stream production chat
+```
+
+Or ask the CLI to list project and Log Stream names for interactive selection:
+
+```bash
+evalops chat --select-scope
+```
+
+If configured resources are invalid, an interactive terminal offers the same
+picker. Automated runs fail with a clear configuration error instead of
+waiting for input. Cross-environment comparison is initiated only when a user
+selects a second project.
 
 Default operating limits include:
 
@@ -245,10 +269,15 @@ Stream being investigated.
 | `evalops demo` | Run a presenter-ready guided scenario. |
 | `evalops demo-seed` | Create deterministic sample traces for demonstrations. |
 
-Global options must appear before the command:
+`--select-scope` may be placed before or after a command. It only changes the
+working context; it does not approve writes. The `--yes` option approves remote
+write previews and should be used only in trusted automation.
+
+Except for `--select-scope`, global options must appear before the command:
 
 ```bash
 evalops --project my-project --log-stream production chat
+evalops chat --select-scope
 evalops --dry-run setup --with-agent-control
 evalops --yes --project my-project demo-seed
 ```

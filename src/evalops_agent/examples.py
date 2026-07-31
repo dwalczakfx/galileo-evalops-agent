@@ -23,7 +23,8 @@ def print_demo_walkthrough() -> None:
         """
 Guided EvalOps demo
 -------------------
-1. Confirm the configured project and source Log Stream.
+1. Review the configured project and source Log Stream shown in Working context.
+   To choose different resources, start the command with `--select-scope`.
 2. Optionally run `demo-seed` to write 12 deterministic, zero-LLM-call traces.
 3. Select `evalops-demo-source` as the source Log Stream.
 4. Run: "Summarize quality metrics for the last 24 hours."

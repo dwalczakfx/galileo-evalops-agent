@@ -48,33 +48,67 @@ def _choose_from(items: list[Any], label: str) -> Any:
         print(f"Enter a number between 1 and {len(items)}.")
 
 
+def _select_project(
+    settings: Settings,
+    service: GalileoService,
+    *,
+    project_arg: str | None,
+    select_interactively: bool,
+    allow_recovery: bool,
+) -> Any:
+    project_name = project_arg or settings.default_project
+    if select_interactively and not project_arg:
+        print("Select a Galileo project (names only; no traces or metrics are queried):")
+        return _choose_from(service.list_projects(), "projects")
+
+    project = service.get_project(project_name)
+    if project is not None:
+        return project
+    if allow_recovery:
+        print(
+            f"Project {project_name!r} was not found. Select a Galileo project "
+            "(names only; no traces or metrics are queried):"
+        )
+        return _choose_from(service.list_projects(), "projects")
+    raise LookupError(
+        f"Project {project_name!r} was not found. Correct GALILEO_PROJECT, pass "
+        "--project, or run with --select-scope."
+    )
+
+
 def select_scope(
     settings: Settings,
     service: GalileoService,
     *,
     project_arg: str | None,
     stream_arg: str | None,
-    non_interactive: bool,
+    select_interactively: bool,
+    allow_recovery: bool,
 ) -> Scope:
-    project_name = project_arg or settings.default_project
-    if not project_arg and not non_interactive:
-        if not _confirm(f"Use configured project {project_name!r}?"):
-            print("Loading project names only; no traces or metrics are queried.")
-            project_name = _choose_from(service.list_projects(), "projects").name
-    project = service.get_project(project_name)
-    if project is None:
-        raise LookupError(f"Project {project_name!r} was not found.")
+    project = _select_project(
+        settings,
+        service,
+        project_arg=project_arg,
+        select_interactively=select_interactively,
+        allow_recovery=allow_recovery,
+    )
 
     stream_name = stream_arg or settings.default_source_stream
-    source = service.get_log_stream(project.id, stream_name)
-    if source is None:
-        if non_interactive:
-            raise LookupError(f"Log Stream {stream_name!r} was not found.")
-        print(f"Log Stream {stream_name!r} was not found. Select one:")
+    if select_interactively and not stream_arg:
+        print(f"Select a source Log Stream in {project.name!r}:")
         source = _choose_from(service.list_log_streams(project.id), "Log Streams")
-    elif not stream_arg and not non_interactive:
-        if not _confirm(f"Analyze configured Log Stream {stream_name!r}?"):
+    else:
+        source = service.get_log_stream(project.id, stream_name)
+    if source is None:
+        if allow_recovery:
+            print(f"Log Stream {stream_name!r} was not found. Select one:")
             source = _choose_from(service.list_log_streams(project.id), "Log Streams")
+        else:
+            raise LookupError(
+                f"Log Stream {stream_name!r} was not found in project "
+                f"{project.name!r}. Correct GALILEO_LOG_STREAM, pass --log-stream, "
+                "or run with --select-scope."
+            )
 
     if source.name == settings.telemetry_stream:
         raise ConfigurationError(
@@ -120,6 +154,12 @@ def print_scope(scope: Scope, settings: Settings) -> None:
     print(f"Default lookback: {settings.default_lookback_hours} hours")
     print(f"Trace limit:      {settings.max_traces_per_query}")
     print(f"Detail limit:     {settings.max_detailed_traces}")
+    print("Change scope:     restart with --project/--log-stream or --select-scope")
+
+
+def _allow_scope_recovery(args: argparse.Namespace) -> bool:
+    """Allow a picker for invalid config only in a deliberate interactive run."""
+    return bool(args.select_scope or (not args.yes and sys.stdin.isatty()))
 
 
 def print_app_intro(scope: Scope) -> None:
@@ -152,7 +192,8 @@ def run_doctor(settings: Settings, service: GalileoService, args: argparse.Names
         service,
         project_arg=args.project,
         stream_arg=args.log_stream,
-        non_interactive=True,
+        select_interactively=args.select_scope,
+        allow_recovery=args.select_scope,
     )
     print("\nConnectivity")
     print(f"  project: {scope.project_name} ✓")
@@ -236,7 +277,8 @@ def run_setup(
         service,
         project_arg=args.project,
         stream_arg=args.log_stream,
-        non_interactive=args.yes,
+        select_interactively=args.select_scope,
+        allow_recovery=_allow_scope_recovery(args),
     )
     scope = ensure_telemetry_stream(scope, service, approval)
     print_scope(scope, settings)
@@ -332,7 +374,8 @@ def run_chat(
         service,
         project_arg=args.project,
         stream_arg=args.log_stream,
-        non_interactive=args.yes,
+        select_interactively=args.select_scope,
+        allow_recovery=_allow_scope_recovery(args),
     )
     scope = ensure_telemetry_stream(scope, service, approval)
     print_scope(scope, settings)
@@ -426,14 +469,13 @@ def run_demo_presentation(
 
     launch_args = _copy_args(args)
     if option.requires_demo_data:
-        project_name = args.project or settings.default_project
-        if not args.project and not args.yes:
-            if not _confirm(f"Use configured project {project_name!r} for the demo?"):
-                print("Loading project names only; no traces or metrics are queried.")
-                project_name = _choose_from(service.list_projects(), "projects").name
-        project = service.get_project(project_name)
-        if project is None:
-            raise LookupError(f"Project {project_name!r} was not found.")
+        project = _select_project(
+            settings,
+            service,
+            project_arg=args.project,
+            select_interactively=args.select_scope,
+            allow_recovery=_allow_scope_recovery(args),
+        )
         demo_stream = service.get_log_stream(project.id, settings.demo_stream)
         if demo_stream is None:
             print(
@@ -480,14 +522,13 @@ def run_offline_demo_preview(args: argparse.Namespace) -> int:
 
 def run_demo_seed(settings: Settings, service: GalileoService, args: argparse.Namespace) -> int:
     approval = ApprovalGate(dry_run=args.dry_run, assume_yes=args.yes)
-    project_name = args.project or settings.default_project
-    if not args.project and not args.yes:
-        if not _confirm(f"Use configured project {project_name!r} for the demo?"):
-            print("Loading project names only; no traces or metrics are queried.")
-            project_name = _choose_from(service.list_projects(), "projects").name
-    project = service.get_project(project_name)
-    if project is None:
-        raise LookupError(f"Project {project_name!r} was not found.")
+    project = _select_project(
+        settings,
+        service,
+        project_arg=args.project,
+        select_interactively=args.select_scope,
+        allow_recovery=_allow_scope_recovery(args),
+    )
     stream = service.get_log_stream(project.id, settings.demo_stream)
     approval.require(
         OperationPreview(
@@ -522,10 +563,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--env-file", help="Override the environment file.")
     parser.add_argument("--project", help="Exact project name. No organization trace scan is used.")
     parser.add_argument("--log-stream", help="Exact source Log Stream name.")
+    parser.add_argument(
+        "--select-scope",
+        action="store_true",
+        help="Interactively select a project and source Log Stream instead of using configured defaults.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Preview but never execute writes.")
-    parser.add_argument("-y", "--yes", action="store_true", help="Accept selections and write previews.")
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Approve write previews and run guided demos without pauses.",
+    )
     subparsers = parser.add_subparsers(dest="command")
-    subparsers.add_parser("doctor", help="Run read-only configuration and connectivity checks.")
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Run read-only configuration and connectivity checks.",
+    )
     setup_parser = subparsers.add_parser(
         "setup",
         help="Create telemetry and optionally install the Agent Control starter policy.",
@@ -538,7 +592,10 @@ def build_parser() -> argparse.ArgumentParser:
             "policy after a write preview."
         ),
     )
-    subparsers.add_parser("chat", help="Start the conversational EvalOps operator.")
+    chat_parser = subparsers.add_parser(
+        "chat",
+        help="Start the conversational EvalOps operator.",
+    )
     demo_parser = subparsers.add_parser(
         "demo",
         help="Choose and run a presenter-ready guided demo.",
@@ -558,10 +615,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print the selected presentation card and prompts without running them.",
     )
-    subparsers.add_parser(
+    demo_seed_parser = subparsers.add_parser(
         "demo-seed",
         help="Create 12 deterministic demo traces after a write preview.",
     )
+    for command_parser in (
+        doctor_parser,
+        setup_parser,
+        chat_parser,
+        demo_parser,
+        demo_seed_parser,
+    ):
+        command_parser.add_argument(
+            "--select-scope",
+            action="store_true",
+            default=argparse.SUPPRESS,
+            help="Interactively select scope instead of using configured defaults.",
+        )
     return parser
 
 
