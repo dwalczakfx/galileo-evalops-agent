@@ -30,8 +30,9 @@ def describe_model_error(error: Exception, settings: Settings) -> str:
     ).lower()
     if "authenticationerror" in combined or "incorrect api key" in combined or "401" in combined:
         return (
-            f"Model authentication failed for {settings.model!r}. Update "
-            "OPENAI_API_KEY for the configured OPENAI_BASE_URL."
+            f"Model authentication or access failed for {settings.model!r}. Check "
+            "OPENAI_API_KEY and confirm EVALOPS_MODEL is permitted by the "
+            "configured OPENAI_BASE_URL."
         )
     if "notfounderror" in combined or "model_not_found" in combined or "404" in combined:
         return (
