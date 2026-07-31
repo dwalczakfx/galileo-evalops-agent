@@ -1,0 +1,8 @@
+include README.md
+include requirements.txt
+include Dockerfile
+include .env.example
+include .gitignore
+include .dockerignore
+recursive-include .github *.yml
+recursive-include tests *.py
