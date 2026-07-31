@@ -1,335 +1,259 @@
 # Galileo EvalOps Agent
 
-A standalone, cost-bounded operator that uses Galileo APIs to investigate one
-selected project and Log Stream, manage evaluation workflows, curate regression
-datasets, evaluate release readiness, and propose governed remediations.
+[![CI](https://github.com/dwalczakfx/galileo-evalops-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/dwalczakfx/galileo-evalops-agent/actions/workflows/ci.yml)
 
-The application does **not** perform organization-wide trace or metric scans.
-The configured project and Log Stream are suggestions that the user confirms
-before analysis. Environment comparison is the only two-project operation: it
-reads capped metadata from one exact target project and never copies trace data.
+Galileo EvalOps Agent is an interactive command-line assistant for teams that
+operate, evaluate, and improve AI applications in Galileo. It connects
+production insights with practical EvalOps workflows: investigating quality
+changes, reviewing traces, building regression datasets, comparing experiments,
+planning evaluation cost, and managing Agent Control guardrails.
 
-## Data flow
+The agent guides users through available Galileo projects, Log Streams,
+metrics, datasets, prompts, and experiments. You can work with familiar names
+and guided menus instead of looking up resource IDs.
 
-```text
-Selected project and source Log Stream
-        |
-        | aggregate metrics first
-        v
-Bounded trace search (default: 20)
-        |
-        | selected trace IDs only
-        v
-Detailed inspection (default: 5)
-        |
-        | explicit approval
-        v
-Regression dataset -> bounded experiment
-```
+## Capabilities
 
-The EvalOps Agent writes its own traces to a separate `evalops-agent` Log Stream
-inside the selected project. This prevents its activity from contaminating the
-source data it analyzes.
+| Area | What the agent helps you accomplish |
+| --- | --- |
+| Production quality | Investigate metric changes and inspect representative low-quality traces. |
+| Regression testing | Convert reviewed production failures into reusable Galileo datasets and identify coverage gaps. |
+| Experiments | Discover, compare, prepare, and run bounded evaluation experiments. |
+| Release decisions | Apply explicit quality and cost criteria to produce a repeatable `GO` or `HOLD` recommendation. |
+| Project health | Review Log Stream activity, metrics, datasets, prompts, experiments, sessions, and governance coverage. |
+| Cost planning | Estimate generation and evaluator calls before an evaluation is launched. |
+| Agent Control | Install a starter safety policy, inspect coverage, and build or simulate additional controls. |
+| Environment management | Compare two selected Galileo projects and optionally create missing Log Streams. |
+| Signals workflow | Use a Galileo Signal name or link as the starting context for a focused investigation. |
 
-## Environment
+Management changes—such as creating datasets, experiments, controls, or Log
+Streams—are shown as a preview and require approval. Read and evaluation
+budgets are configurable, making the agent suitable for both demos and regular
+project operations.
 
-Configuration is self-contained. By default, the app loads `.env` from this
-directory. Create it from the deployment template:
+## Quick start
 
-```bash
-cp .env.example .env
-```
+### 1. Requirements
 
-Fill every value marked `REQUIRED`. In particular, choose an
-`EVALOPS_MODEL` supported by the endpoint configured through
-`OPENAI_BASE_URL`; leave `OPENAI_BASE_URL` blank only when using the standard
-OpenAI endpoint.
+- Python 3.12, 3.13, or 3.14
+- A Galileo account and API key
+- A Galileo project with a source Log Stream
+- Access to an OpenAI-compatible model endpoint
+- A Galileo Agent Control endpoint
 
-`.env` is ignored by Git and Docker. Never put credentials in `.env.example`.
-Process environment variables take precedence over the file. To use another
-file:
+### 2. Install
 
 ```bash
-python3 -m evalops_agent --env-file /run/secrets/evalops.env chat
-```
+git clone https://github.com/dwalczakfx/galileo-evalops-agent.git
+cd galileo-evalops-agent
 
-`AGENT_CONTROL_URL` is required. Without Agent Control initialization,
-decorated functions would otherwise run without protection, which is not an
-acceptable deployment mode for this application.
-
-## Install
-
-From this directory:
-
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r requirements.txt
 python3 -m pip install --no-deps -e .
 ```
 
-`requirements.txt` pins the direct dependency versions tested with this
-release. `pyproject.toml` also applies major-version upper bounds.
+After activation, the `evalops` command is available in the virtual
+environment. On Windows PowerShell, activate with
+`.venv\Scripts\Activate.ps1`.
 
-## Start safely
+### 3. Configure
 
-Create the dedicated telemetry Log Stream, register the agent, and install its
-versioned Agent Control starter policy after reviewing the write previews:
-
-```bash
-python3 -m evalops_agent setup --with-agent-control
-```
-
-The installer validates every control with Galileo before writing. It creates
-or reuses four controls, groups them in a real Agent Control policy, associates
-that policy with `EVALOPS_AGENT_NAME`, refreshes the runtime, and verifies that
-all four controls are effective for the dedicated telemetry Log Stream. It is
-safe to rerun: matching resources and associations are reused, while a
-same-name control with different logic stops installation instead of being
-overwritten. Installation performs no LLM generation or evaluator calls.
-
-Preview the policy operation without registering the agent or writing Agent
-Control resources:
+Create a private environment file from the included template:
 
 ```bash
-python3 -m evalops_agent --dry-run setup --with-agent-control
+cp .env.example .env
 ```
 
-To create only the telemetry Log Stream and manage policies manually, use
-`python3 -m evalops_agent setup`.
+Open `.env` and review these core settings:
 
-Then run the read-only deployment check. It verifies the exact Galileo scope,
-dedicated telemetry stream, local environment path, exact agent registration,
-and effective Agent Controls without scanning organization traces:
+| Setting | Purpose |
+| --- | --- |
+| `GALILEO_API_URL` | Galileo API endpoint. |
+| `GALILEO_CONSOLE_URL` | Optional Galileo Console address used for navigation. |
+| `GALILEO_API_KEY` | API key used by Galileo and Agent Control. |
+| `GALILEO_PROJECT` | Default project presented when the agent starts. |
+| `GALILEO_LOG_STREAM` | Default source Log Stream to investigate. |
+| `OPENAI_API_KEY` | Key for the configured model endpoint. |
+| `OPENAI_BASE_URL` | Optional OpenAI-compatible endpoint; leave blank for the standard OpenAI API. |
+| `EVALOPS_MODEL` | Model name supported by the configured endpoint. |
+| `AGENT_CONTROL_URL` | Galileo Agent Control service endpoint. |
+
+The template also includes defaults for the telemetry Log Stream, agent name,
+query limits, and evaluation budgets. `.env` is excluded from Git and Docker;
+do not place credentials in `.env.example`.
+
+To use a centrally managed environment file instead:
 
 ```bash
-python3 -m evalops_agent doctor
+evalops --env-file /run/secrets/evalops.env chat
 ```
 
-Start the guided conversational agent:
+### 4. Initialize Galileo integration
+
+Run the guided setup:
 
 ```bash
-python3 -m evalops_agent chat
+evalops setup --with-agent-control
 ```
 
-Before showing the menu, the CLI explains the agent’s purpose, available
-capabilities, selected source and telemetry streams, cost boundaries, and write
-approval behavior. It then asks what the user wants to accomplish:
+Setup creates the dedicated EvalOps telemetry Log Stream when needed,
+registers the agent, and offers to install the versioned starter Agent Control
+policy. Every change is displayed before approval. Setup does not call an LLM
+or run evaluators.
 
-1. Investigate a quality drop
-2. Find and explain low-quality traces
-3. Build a regression dataset
-4. Review or compare experiments
-5. Get an EvalOps project briefing
-6. Prepare a bounded experiment
-7. Run Galileo Project Doctor
-8. Find production-to-dataset coverage gaps
-9. Evaluate release readiness
-10. Optimize evaluation cost and budget
-11. Build and simulate an Agent Control
-12. Compare or bootstrap Galileo environments
-13. Investigate a Galileo Signal
-0. Ask a custom question
-
-Each workflow discovers valid Galileo metrics and resources before asking the
-user to choose. The user does not need to know metric, trace, dataset, prompt,
-or experiment IDs.
-
-Open the presenter-ready demo menu:
+To preview setup without making changes:
 
 ```bash
-python3 -m evalops_agent demo
+evalops --dry-run setup --with-agent-control
 ```
 
-The presentation menu includes:
+### 5. Verify the installation
+
+```bash
+evalops doctor
+```
+
+The doctor checks configuration, project connectivity, source and telemetry
+Log Streams, Agent Control registration, and effective control coverage.
+
+### 6. Start the agent
+
+```bash
+evalops chat
+```
+
+The CLI presents guided workflows and also accepts free-form EvalOps requests.
+
+## Guided workflows
+
+The chat menu provides ready-to-use workflows for common tasks:
+
+1. Investigate a quality drop.
+2. Find and explain low-quality traces.
+3. Build a regression dataset.
+4. Review or compare experiments.
+5. Get an EvalOps project briefing.
+6. Prepare a bounded experiment.
+7. Run Galileo Project Doctor.
+8. Find production-to-dataset coverage gaps.
+9. Evaluate release readiness.
+10. Optimize evaluation cost and budget.
+11. Build and simulate an Agent Control.
+12. Compare or bootstrap Galileo environments.
+13. Investigate a Galileo Signal.
+
+The agent discovers the relevant resources before asking you to choose one, so
+these workflows do not require Galileo IDs.
+
+## Demo mode
+
+Open the presenter-ready scenario menu:
+
+```bash
+evalops demo
+```
+
+Available scenarios include:
 
 - Why did quality drop?
-- Turn production failures into regression tests
-- EvalOps project briefing
-- Governed agent and prompt-injection resistance
-- Galileo Project Doctor
-- Advanced Galileo management tour
+- Turn production failures into regression tests.
+- EvalOps project briefing.
+- Governed agent and prompt-injection resistance.
+- Galileo Project Doctor.
+- Advanced Galileo management tour.
 
-Each option includes an audience takeaway, cost/write profile, speaker notes,
-and guided prompts that can be run one step at a time.
-
-List or preview scenarios without running model calls:
+List or preview the scenarios without launching model calls:
 
 ```bash
-python3 -m evalops_agent demo --list
-python3 -m evalops_agent demo \
-  --scenario management-tour \
-  --print-only
+evalops demo --list
+evalops demo --scenario management-tour --print-only
 ```
 
-Seed the deterministic demo after reviewing its write preview:
+For a predictable demo environment, create the included sample traffic:
 
 ```bash
-python3 -m evalops_agent demo-seed
+evalops demo-seed
 ```
 
-This writes 12 traces and computes `demo_quality` locally. It makes no LLM or
-external evaluator calls. The output gives the exact command for analyzing the
-new `evalops-demo-source` stream.
+This produces 12 deterministic traces with a locally calculated
+`demo_quality` metric and does not use an LLM or external evaluator.
 
-Use `--dry-run` to guarantee that no writes execute. Use `--project` and
-`--log-stream` for exact, non-discovery targeting:
+## Agent Control integration
+
+The recommended setup installs
+`<EVALOPS_AGENT_NAME>-starter-safety-v1`. The policy contains four controls:
+
+- Deny explicit requests to reveal credentials or system prompts.
+- Deny responses that resemble credential disclosure.
+- Deny destructive requests targeting Galileo resources.
+- Observe prompt-injection language found in inspected traces.
+
+The setup is safe to rerun. Matching controls and policy associations are
+reused, while an unexpected control with the same name is left unchanged and
+reported for review.
+
+The interactive **Build and simulate an Agent Control** workflow can validate
+new regex controls, preview their behavior against inspected traces, and
+publish them after approval.
+
+## Scope and cost management
+
+Each conversation works within a selected project and source Log Stream. This
+keeps investigations relevant and makes API and evaluation usage predictable.
+Cross-environment comparison is initiated only when a user selects a second
+project.
+
+Default operating limits include:
+
+| Limit | Default |
+| --- | ---: |
+| Metric and trace lookback | 7 days |
+| Traces returned per search | 20 |
+| Detailed traces per conversation | 5 |
+| Dataset or experiment rows | 20 |
+| Experiment metrics | 3 |
+| Generation calls | 50 |
+| Evaluator calls | 100 |
+
+Limits can be adjusted in `.env`. The agent estimates generation and evaluator
+usage before an experiment and asks for approval before executing it.
+
+## Galileo observability
+
+The agent records its own activity in the dedicated Log Stream configured by
+`EVALOPS_LOG_STREAM` (default: `evalops-agent`). Galileo receives:
+
+- Conversation sessions and agent traces.
+- OpenAI-compatible LLM spans.
+- Galileo API tool spans.
+- Agent Control evaluations and decisions.
+- Latency and token usage captured by the Galileo integrations.
+
+Telemetry is flushed after each completed turn, and upload failures are shown
+in the CLI. The telemetry Log Stream must be different from the source Log
+Stream being investigated.
+
+## Command reference
+
+| Command | Description |
+| --- | --- |
+| `evalops setup` | Create or verify the dedicated telemetry Log Stream. |
+| `evalops setup --with-agent-control` | Register the agent and install the starter control policy. |
+| `evalops doctor` | Run read-only configuration and connectivity checks. |
+| `evalops chat` | Start the interactive EvalOps assistant. |
+| `evalops demo` | Run a presenter-ready guided scenario. |
+| `evalops demo-seed` | Create deterministic sample traces for demonstrations. |
+
+Global options must appear before the command:
 
 ```bash
-python3 -m evalops_agent \
-  --project dwalczak-demo \
-  --log-stream guardrails \
-  --dry-run \
-  chat
+evalops --project my-project --log-stream production chat
+evalops --dry-run setup --with-agent-control
+evalops --yes --project my-project demo-seed
 ```
 
-## Advanced management capabilities
-
-- **Project Doctor** audits capped stream activity, empty sessions, enabled
-  metrics, datasets, prompts, experiments, and Agent Control coverage. Findings
-  are deterministic and evidence-linked; there is deliberately no opaque health
-  score.
-- **Production coverage analyst** compares already inspected failures with one
-  small regression dataset. It uses lexical similarity as a triage signal, not
-  as proof of semantic coverage.
-- **Release gate** compares two exact experiments against thresholds supplied by
-  the user. The result is `GO` only when every criterion passes; otherwise it is
-  `HOLD`.
-- **Evaluation cost advisor** forecasts sampled rows, generation calls, and
-  evaluator calls before work is run. It shows the formula and never invents
-  currency pricing.
-- **Agent Control builder** constructs a regex control, validates it with Agent
-  Control, and simulates it locally only against traces inspected in the current
-  session. Creation and attachment are separately approval-gated.
-- **Environment drift and bootstrap** compares capped resource metadata for the
-  selected project and one exact target. The only automated remediation is
-  approval-gated creation of explicitly selected missing Log Streams. It never
-  copies traces, datasets, prompts, collaborators, or deletes resources.
-- **Signals handoff** accepts a Signal name or link, metric, threshold, and
-  window supplied by the user, validates the metric in the selected Log Stream,
-  and starts the bounded incident workflow. The installed Galileo SDK currently
-  exposes no Signals endpoint, so the agent explicitly reports that it did not
-  query a Signals API.
-
-## Built-in examples
-
-The chat UI always offers starter requests:
-
-1. List friendly metric names available on the selected Log Stream.
-2. Summarize quality metrics for the last 24 hours.
-3. Find up to 10 traces below a selected metric threshold.
-4. Inspect the three most relevant failures from the previous search.
-5. List datasets in the selected project.
-6. List prompts in the selected project.
-7. List experiments and summarize available results.
-8. Compare two experiments numerically.
-9. Prepare a regression dataset from previously returned trace IDs.
-10. For the demo stream, find traces with `demo_quality` below 0.6.
-11. Run Galileo Project Doctor with a 30-day stale-resource threshold.
-12. Estimate calls for 20 rows, two metrics, one run, and a 50% sample.
-13. Compare this project with one exact target without copying trace data.
-14. Turn user-provided Galileo Signal context into a bounded investigation.
-
-No Galileo IDs need to be typed by the user.
-
-## Cost controls
-
-- Aggregate metric query before raw trace retrieval
-- Trace and metric operations restricted to one selected project and Log Stream
-- No automatic pagination
-- Maximum seven-day lookback by default
-- Maximum 20 traces per search
-- At most 50 recent candidate traces examined for client-side metric filtering
-- Maximum five detailed traces
-- Maximum 20 dataset and experiment rows
-- Maximum three experiment metrics
-- Maximum 10 streams and 20 resources per type in management audits
-- Maximum five recent sessions sampled per audited stream
-- Maximum 30 dataset rows in lexical coverage analysis
-- Configurable ceilings of 50 generation and 100 evaluator calls
-- Deterministic Python for sorting and numeric comparisons
-- Session-level caching for repeated metric requests
-- Write preview with estimated generation and evaluator calls
-- Explicit approval for every write
-
-Querying existing metric results is read-only. Enabling metrics, recomputing
-metrics, and running experiments can invoke evaluators and are never performed
-automatically.
-
-The hosted trace-search endpoint can reject metric filters for some streams.
-The app therefore reads at most `EVALOPS_MAX_TRACE_CANDIDATES` recent traces
-(default 50) from the selected stream and filters them locally. Results are
-clearly labeled as a bounded recent sample, not an exhaustive project-wide
-ranking.
-
-The management limits can be changed with
-`EVALOPS_MAX_MANAGEMENT_STREAMS`, `EVALOPS_MAX_MANAGEMENT_RESOURCES`,
-`EVALOPS_MAX_SESSION_SAMPLE`, `EVALOPS_MAX_COVERAGE_ROWS`,
-`EVALOPS_MAX_GENERATION_CALLS`, and `EVALOPS_MAX_EVALUATOR_CALLS`.
-
-## Galileo instrumentation
-
-- One lazily created Galileo session per CLI conversation that runs a request
-- Controlled request and response boundaries plus an agent execution trace per user turn
-- Tool and OpenAI LLM spans nested under the agent execution trace
-- `@log(span_type="tool")` on every Galileo management operation
-- OpenAI calls captured by Galileo's OpenAI integration
-- Immediate flush after every completed user turn, with visible upload status
-- Visible telemetry errors instead of silently empty sessions
-- Agent Control bridge registered against the dedicated telemetry Log Stream
-- `@control()` on user requests and responses, detailed trace inspection,
-  dataset writes, experiment execution, and advanced management writes
-- Explicit handling of DENY and bounded STEER decisions
-- Agent Control policy refresh and observability resources shut down on exit
-- Final Galileo flush, session cleanup, and auth-environment restoration on exit
-- Opening and quitting the CLI without a request does not create an empty session
-
-The source and telemetry Log Streams must differ. The application refuses to
-start if they are the same, preventing recursive self-analysis and telemetry
-contamination.
-
-## Agent Control policies
-
-The decorators define decision boundaries and policies remain centrally
-managed in Galileo. The recommended installation command creates and attaches
-`<EVALOPS_AGENT_NAME>-starter-safety-v1` with these server-validated controls:
-
-- DENY explicit requests to expose credentials or system prompts.
-- DENY responses that resemble credential disclosure.
-- DENY destructive requests targeting Galileo resources.
-- OBSERVE prompt-injection language in inspected trace content.
-
-The starter policy is intentionally conservative and versioned. Additional
-controls can be proposed and simulated through the interactive Agent Control
-builder. Controls can target these exact runtime step names:
-
-- `evalops_user_request`
-- `evalops_agent_response`
-- `inspect_production_trace`
-- `analyze_regression_coverage`
-- `write_regression_dataset`
-- `write_prompt_version`
-- `run_bounded_experiment`
-- `bootstrap_galileo_environment`
-- `write_agent_control_policy`
-
-The installer does not replace or edit existing policies. A matching starter
-policy is reused; a conflicting same-name control fails closed for administrator
-review.
-
-## Deployment
-
-This repository is designed as a single-session CLI process. Run one interactive
-conversation per process; it is not a multi-user HTTP service.
-
-Local deployment:
-
-```bash
-python3 -m evalops_agent doctor
-python3 -m evalops_agent chat
-```
-
-Container deployment:
+## Docker
 
 ```bash
 docker build -t galileo-evalops-agent:0.4.0 .
@@ -337,12 +261,23 @@ docker run --rm -it --env-file .env \
   galileo-evalops-agent:0.4.0 chat
 ```
 
-The container runs as an unprivileged user and does not contain `.env`, tests,
-Git metadata, or local caches.
+The image runs as an unprivileged user and does not include `.env`, tests, Git
+metadata, or local caches.
 
-GitHub Actions runs the test suite and compilation checks on Python 3.12–3.14
-and separately builds both the Python distribution and container image. Before
-publishing:
+## Operational notes
+
+- The application is a single-user CLI; start one process per conversation.
+- User requests and inspected trace content are sent to the configured model
+  and recorded in the dedicated telemetry Log Stream.
+- The current Galileo SDK does not expose a Signals API. The Signals workflow
+  starts from a Signal name, link, metric, threshold, and time window supplied
+  by the user.
+- Environment bootstrap can create selected missing Log Streams after approval;
+  it does not copy trace data or delete resources.
+
+## Development
+
+Run the verification suite:
 
 ```bash
 python3 -m pip check
@@ -351,31 +286,6 @@ python3 -m compileall -q src tests
 python3 -m build
 ```
 
-No license is included; choose a license before publishing the repository for
-reuse outside your organization.
-
-## Security and operational boundaries
-
-- Every remote write requires an in-process preview and approval. `--dry-run`
-  prevents writes even when `--yes` is supplied.
-- Trace details can only be fetched after a bounded search. Dataset writes and
-  control simulations require traces inspected in the current session.
-- Agent Control publication requires successful server validation and an exact
-  agent returned by a same-session Agent Control listing.
-- Locally simulated regex controls use a restricted pattern subset to avoid
-  unbounded regex execution.
-- Secrets are redacted from tool errors and structured outputs. Token-count
-  metrics remain visible because they are not credentials.
-- User prompts and inspected trace content are intentionally sent to the
-  configured model and logged to the dedicated Galileo telemetry stream. Apply
-  your organization’s data-retention and access policies.
-- The app does not automatically delete resources, copy traces between
-  projects, enable metrics, or recompute evaluations.
-
-## Tests
-
-Tests use mocked services and do not contact Galileo:
-
-```bash
-python3 -m unittest discover -s tests -v
-```
+Tests use mocked Galileo services and do not contact external systems. GitHub
+Actions tests Python 3.12–3.14 and builds both the Python package and container
+image.
