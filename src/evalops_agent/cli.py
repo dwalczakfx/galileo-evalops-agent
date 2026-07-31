@@ -27,10 +27,16 @@ from .presentation import (
 from .security import sanitize
 from .tools import ToolRegistry
 from .use_cases import (
+    QUICK_USE_CASES,
+    WORKFLOW_GROUPS,
+    combine_use_cases,
     find_use_case,
     find_workflow_group,
+    group_use_cases,
+    parse_menu_indices,
+    print_capability_catalog,
+    print_group_menu,
     print_use_case_menu,
-    select_use_case_from_menu,
 )
 
 
@@ -443,8 +449,15 @@ def _run_presentation_steps(
 def _is_menu_selection(user_input: str, *, menu_open: bool) -> bool:
     if not menu_open:
         return False
+    try:
+        numeric = parse_menu_indices(
+            user_input,
+            maximum=len(QUICK_USE_CASES) + len(WORKFLOW_GROUPS),
+        )
+    except ValueError:
+        return True
     return bool(
-        user_input.isdigit()
+        numeric is not None
         or find_use_case(user_input) is not None
         or find_workflow_group(user_input) is not None
     )
@@ -489,10 +502,10 @@ def run_chat(
         print_app_intro(scope)
         print_use_case_menu()
         print(
-            "\nChoose a topic, type your own request, or enter "
-            "'menu', 'examples', or 'quit'."
+            "\nCommands: 'menu', 'back', 'capabilities', 'examples', or 'quit'."
         )
         menu_open = True
+        active_group = None
         while True:
             try:
                 user_input = input("\nevalops> ").strip()
@@ -506,43 +519,113 @@ def run_chat(
             if user_input.lower() in {"usecases", "workflows", "menu"}:
                 print_use_case_menu()
                 menu_open = True
+                active_group = None
+                continue
+            if user_input.lower() in {"back", "b"}:
+                print_use_case_menu()
+                menu_open = True
+                active_group = None
+                continue
+            if user_input.lower() in {"capabilities", "capability", "help"}:
+                print_capability_catalog()
                 continue
             if user_input.lower() == "examples":
                 print_starter_requests()
                 continue
-            use_case = None
+            selected_use_cases = ()
             if menu_open:
                 if user_input == "0":
-                    print("Type your own EvalOps question at the prompt.")
+                    print("Type any Galileo or EvalOps question at the prompt.")
                     menu_open = False
+                    active_group = None
                     continue
-                if _is_menu_selection(user_input, menu_open=menu_open):
-                    use_case = select_use_case_from_menu(user_input)
-                    if use_case is None:
-                        print_use_case_menu()
+                if active_group is not None:
+                    try:
+                        selected = group_use_cases(active_group, user_input)
+                    except ValueError as exc:
+                        print(exc)
                         continue
+                    if selected is not None:
+                        selected_use_cases = selected
+                    else:
+                        direct = find_use_case(user_input)
+                        next_group = find_workflow_group(user_input)
+                        if direct is not None:
+                            selected_use_cases = (direct,)
+                        elif next_group is not None:
+                            active_group = next_group
+                            print_group_menu(active_group)
+                            continue
+                        else:
+                            menu_open = False
+                            active_group = None
                 else:
-                    menu_open = False
-            elif not user_input.isdigit():
-                use_case = find_use_case(user_input)
-                group = find_workflow_group(user_input)
-                if use_case is None and group is not None:
-                    use_case = select_use_case_from_menu(user_input)
-                    if use_case is None:
-                        print_use_case_menu()
-                        menu_open = True
+                    direct = find_use_case(user_input)
+                    group = find_workflow_group(user_input)
+                    try:
+                        indices = parse_menu_indices(
+                            user_input,
+                            maximum=len(QUICK_USE_CASES) + len(WORKFLOW_GROUPS),
+                        )
+                    except ValueError as exc:
+                        print(exc)
                         continue
-            if use_case is not None:
+                    if indices is not None:
+                        quick = tuple(
+                            QUICK_USE_CASES[index - 1]
+                            for index in indices
+                            if index <= len(QUICK_USE_CASES)
+                        )
+                        groups = tuple(
+                            WORKFLOW_GROUPS[index - len(QUICK_USE_CASES) - 1]
+                            for index in indices
+                            if index > len(QUICK_USE_CASES)
+                        )
+                        if groups:
+                            if len(indices) > 1:
+                                print(
+                                    "Open one topic first, then choose up to three "
+                                    "workflows inside it."
+                                )
+                                continue
+                            active_group = groups[0]
+                            print_group_menu(active_group)
+                            continue
+                        selected_use_cases = quick
+                    elif direct is not None:
+                        selected_use_cases = (direct,)
+                    elif group is not None:
+                        active_group = group
+                        print_group_menu(active_group)
+                        continue
+                    else:
+                        menu_open = False
+            elif not user_input.isdigit():
+                direct = find_use_case(user_input)
+                group = find_workflow_group(user_input)
+                if direct is not None:
+                    selected_use_cases = (direct,)
+                elif group is not None:
+                    active_group = group
+                    menu_open = True
+                    print_group_menu(active_group)
+                    continue
+            if selected_use_cases:
+                use_case = combine_use_cases(selected_use_cases)
                 print(f"\nStarting workflow: {use_case.title}")
                 user_input = use_case.opening_request
                 menu_open = False
-            elif menu_open:
-                continue
+                active_group = None
             else:
                 # Once a workflow or free-form conversation starts, numbers are
                 # answers to the agent (thresholds, hours, limits), not menu choices.
                 menu_open = False
+                active_group = None
             _run_agent_request(agent, telemetry, scope, user_input)
+            print(
+                "\nContinue naturally, or type 'menu' for shortcuts and "
+                "'capabilities' for the full catalog."
+            )
     return 0
 
 

@@ -16,8 +16,8 @@ def print_starter_requests() -> None:
 def print_guided_start() -> None:
     print_use_case_menu()
     print(
-        "\nChoose a topic, type your own request, or enter "
-        "'menu' to show this menu again."
+        "\nChoose one shortcut, combine options such as '1,2', open a topic, "
+        "or type any request. Enter 'capabilities' for the full catalog."
     )
 
 

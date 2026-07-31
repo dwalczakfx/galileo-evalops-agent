@@ -26,9 +26,10 @@ def settings() -> Settings:
 
 
 class FakeMessage:
-    def __init__(self, content=None, tool_calls=None):
+    def __init__(self, content=None, tool_calls=None, finish_reason="stop"):
         self.content = content
         self.tool_calls = tool_calls
+        self.finish_reason = finish_reason
 
     def model_dump(self, exclude_none=True):
         rendered = {"role": "assistant"}
@@ -56,8 +57,14 @@ class FakeCompletions:
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
+        message = next(self._messages)
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=next(self._messages))]
+            choices=[
+                SimpleNamespace(
+                    message=message,
+                    finish_reason=message.finish_reason,
+                )
+            ]
         )
 
 
@@ -122,6 +129,29 @@ class AgentTests(unittest.TestCase):
         ]
         self.assertEqual(len(tool_messages), 2)
         self.assertIn("not executed", tool_messages[1]["content"])
+
+    def test_truncated_answer_gets_one_concise_replacement(self) -> None:
+        completions = FakeCompletions(
+            [
+                FakeMessage(content="Partial", finish_reason="length"),
+                FakeMessage(content="Complete concise replacement."),
+            ]
+        )
+        agent = object.__new__(EvalOpsAgent)
+        agent.settings = settings()
+        agent.tools = FakeTools()
+        agent.messages = [{"role": "system", "content": "test"}]
+        agent.client = SimpleNamespace(
+            chat=SimpleNamespace(completions=completions)
+        )
+
+        result = EvalOpsAgent.chat_turn.__wrapped__(agent, "overview")
+
+        self.assertEqual(result, "Complete concise replacement.")
+        self.assertEqual(len(completions.calls), 2)
+        self.assertEqual(completions.calls[-1]["tool_choice"], "none")
+        self.assertEqual(completions.calls[-1]["max_completion_tokens"], 3200)
+        self.assertIn("truncated", agent.messages[-2]["content"])
 
 
 if __name__ == "__main__":

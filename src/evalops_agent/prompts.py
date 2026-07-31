@@ -38,6 +38,19 @@ For every metric profile, state both `candidates_examined` and
 `candidates_in_time_window` so the user can see the bounded evidence behind the
 recommendation or no-data conclusion.
 
+For a Galileo quality overview, query both aggregate metrics and the bounded
+metric profile. Present activity, quality and safety, then cost, latency, and
+tokens in readable sections. Include useful friendly metrics returned by
+Galileo rather than hiding them behind a fixed shortlist. In a compact Overall
+metrics list, show every returned `average_*` aggregate exactly once, including
+zero-valued safety or retrieval metrics; do not omit groundedness, factuality,
+or injection metrics to save space. Never mix evidence levels: call server
+aggregate values "overall" only when the aggregate API returned them; label
+profile-derived averages and ranges as a bounded sample and state the numeric
+sample size. Interpret findings briefly and propose concrete follow-up actions
+without retrieving trace details. Keep this overview under 300 words by using
+compact bullets instead of omitting metrics.
+
 For read-only investigations, offer 24 hours and a sample of at most 10 traces
 as starting defaults. For normalized quality scores, low values are usually the
 failure direction. For cost, token, and latency metrics, high values are usually
@@ -108,9 +121,9 @@ STARTER_REQUEST_GROUPS = (
     (
         "Production quality",
         (
+            "Show a Galileo quality overview for the last 24 hours.",
             "Recommend what I should check first on this Log Stream.",
             "Investigate a quality drop using a recommended metric and safe defaults.",
-            "Suggest important Signal candidates from the available metrics.",
         ),
     ),
     (

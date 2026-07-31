@@ -36,6 +36,48 @@ SCOPE = Scope(
 
 
 class GalileoServiceTests(unittest.TestCase):
+    @patch("evalops_agent.galileo_api.Scorers")
+    def test_aggregate_scorer_ids_are_resolved_to_friendly_names(
+        self,
+        scorers: MagicMock,
+    ) -> None:
+        scorer_id = "894d889a-69f6-4b7d-81dc-58a69a37a2a6"
+        scorers.return_value.list_by_ids.return_value = [
+            SimpleNamespace(id=scorer_id, metric_name="groundedness")
+        ]
+        service = GalileoService(settings())
+
+        catalog = service._catalog_with_aggregate_scorers(
+            SCOPE,
+            {"cost": "cost"},
+            {f"average_{scorer_id}_multijudge_average": 0.93},
+        )
+
+        self.assertEqual(catalog[scorer_id], "groundedness")
+        scorers.return_value.list_by_ids.assert_called_once_with([scorer_id])
+        friendly = service._friendly_metric_mapping(
+            {f"average_{scorer_id}_multijudge_average": 0.93},
+            catalog,
+        )
+        self.assertEqual(
+            friendly,
+            {"average_groundedness_multijudge_average": 0.93},
+        )
+
+    @patch("evalops_agent.galileo_api.Scorers")
+    def test_scorer_name_enrichment_is_optional(self, scorers: MagicMock) -> None:
+        scorer_id = "894d889a-69f6-4b7d-81dc-58a69a37a2a6"
+        scorers.return_value.list_by_ids.side_effect = PermissionError("denied")
+        service = GalileoService(settings())
+
+        catalog = service._catalog_with_aggregate_scorers(
+            SCOPE,
+            {"cost": "cost"},
+            {f"average_{scorer_id}_multijudge_average": 0.93},
+        )
+
+        self.assertEqual(catalog, {"cost": "cost"})
+
     @patch("evalops_agent.galileo_api.get_traces")
     def test_metric_profile_separates_configured_from_usable_values(
         self,

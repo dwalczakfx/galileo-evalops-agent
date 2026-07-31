@@ -136,18 +136,26 @@ evalops chat --select-scope
 
 ## Guided workflows
 
-The chat starts with four clear choices instead of displaying every capability
-at once:
+The chat starts with five shortcuts instead of displaying every capability at
+once:
 
-1. Get a recommended first check.
-2. Investigate production quality.
-3. Improve evaluations and releases.
-4. Govern and manage Galileo.
+1. Show a Galileo quality overview.
+2. Get a recommended first check.
+3. Investigate production quality.
+4. Improve evaluations and releases.
+5. Govern and manage Galileo.
 
 Selecting a topic opens a smaller menu with the relevant workflows. For
 example, **Investigate production quality** includes quality changes,
 low-quality trace triage, proactive Signal candidates, and handoff from a known
-Signal. Type `menu` at any time to return to the topics.
+Signal. Topic menus are non-blocking: you can select a shortcut, type a normal
+request, or use `back` to return. Type `menu` from anywhere to show all top-level
+shortcuts.
+
+The quality overview queries Galileo's aggregate metrics and a bounded metric
+profile, then presents activity, quality and safety, cost, latency, and token
+usage. Server aggregates are kept separate from bounded sample statistics so
+the evidence is not overstated.
 
 The recommended start profiles one bounded recent trace page in the selected
 Log Stream. It separates configured metrics from metrics that actually have
@@ -161,6 +169,13 @@ passed to the conversation instead of being interpreted as menu selections.
 The agent asks for one decision at a time, offers an explanation and a default,
 and lets you accept or change it. Exact workflow titles and keys are also
 accepted.
+
+Choose up to three compatible workflows from the current menu. For example,
+`1,2` combines the two quick actions, while `1,3` combines two workflows inside
+a topic. The agent reuses shared discovery and presents each selected outcome
+separately. Use `capabilities` to display every built-in workflow. These
+workflows are shortcuts, not a whitelist: free-form Galileo and EvalOps requests
+are accepted from every menu and throughout the conversation.
 
 ## Demo mode
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Callable
 
@@ -20,6 +21,36 @@ class WorkflowGroup:
     description: str
     use_case_keys: tuple[str, ...]
     aliases: tuple[str, ...] = ()
+
+
+QUALITY_OVERVIEW_USE_CASE = GuidedUseCase(
+    key="quality-overview",
+    title="Show my Galileo quality overview",
+    description="Summarize activity, quality, safety, cost, latency, and token metrics.",
+    aliases=(
+        "overview",
+        "quality summary",
+        "summarize quality metrics",
+        "show quality metrics",
+    ),
+    opening_request=(
+        "Give me a clear Galileo quality overview for the last 24 hours. Query the "
+        "aggregate metric trend and the bounded metric-value profile before drawing "
+        "conclusions. Present Activity first, then Quality and Safety, then Cost, "
+        "Latency, and Tokens. Show total requests and failures when the aggregate API "
+        "returns them. Treat server aggregate values as overall results. If a metric "
+        "is available only from the bounded trace profile, put it in a separate "
+        "'Bounded sample' section with its numeric sample count and never label it an "
+        "overall aggregate. Include all useful friendly metric names returned by "
+        "Galileo, not only a hard-coded shortlist. In the Overall metrics section, "
+        "show every returned average_* aggregate exactly once, including zero-valued "
+        "safety or retrieval metrics. Explain the strongest two findings and finish "
+        "with up to three concrete next actions. Do not retrieve trace details. Keep "
+        "the complete report under 300 words by using compact bullets. If the window "
+        "contains no traces, report candidates examined and candidates inside the "
+        "window, then offer a wider window."
+    ),
+)
 
 
 RECOMMENDED_USE_CASE = GuidedUseCase(
@@ -43,7 +74,14 @@ RECOMMENDED_USE_CASE = GuidedUseCase(
 )
 
 
+QUICK_USE_CASES = (
+    QUALITY_OVERVIEW_USE_CASE,
+    RECOMMENDED_USE_CASE,
+)
+
+
 GUIDED_USE_CASES = (
+    QUALITY_OVERVIEW_USE_CASE,
     RECOMMENDED_USE_CASE,
     GuidedUseCase(
         key="quality-drop",
@@ -286,16 +324,85 @@ def find_workflow_group(value: str) -> WorkflowGroup | None:
     return GROUPS_BY_ALIAS.get(_normalize(value))
 
 
+MAX_COMBINED_WORKFLOWS = 3
+
+
+def parse_menu_indices(value: str, *, maximum: int) -> tuple[int, ...] | None:
+    """Parse one or more numeric shortcuts without capturing conversational values."""
+    stripped = value.strip()
+    if not re.fullmatch(r"\d+(?:\s*[, +]\s*\d+)*", stripped):
+        return None
+    indices = tuple(dict.fromkeys(int(item) for item in re.findall(r"\d+", stripped)))
+    if len(indices) > MAX_COMBINED_WORKFLOWS:
+        raise ValueError(
+            f"Choose at most {MAX_COMBINED_WORKFLOWS} workflows at a time."
+        )
+    if any(index < 1 or index > maximum for index in indices):
+        raise ValueError(f"Choose numbers from 1 to {maximum}.")
+    return indices
+
+
+def combine_use_cases(use_cases: tuple[GuidedUseCase, ...]) -> GuidedUseCase:
+    if not use_cases:
+        raise ValueError("Select at least one workflow.")
+    if len(use_cases) == 1:
+        return use_cases[0]
+    if len(use_cases) > MAX_COMBINED_WORKFLOWS:
+        raise ValueError(
+            f"Choose at most {MAX_COMBINED_WORKFLOWS} workflows at a time."
+        )
+    goals = "; ".join(
+        f"{index}. {use_case.title} — {use_case.description}"
+        for index, use_case in enumerate(use_cases, start=1)
+    )
+    return GuidedUseCase(
+        key="combined-" + "-".join(use_case.key for use_case in use_cases),
+        title="Combined: " + " + ".join(use_case.title for use_case in use_cases),
+        description="A bounded plan combining selected Galileo outcomes.",
+        opening_request=(
+            "Start a combined guided workflow for these selected outcomes: "
+            f"{goals}. Reuse shared bounded discovery instead of repeating queries. "
+            "Begin with the useful read-only overview or evidence that the outcomes "
+            "share, then clearly separate the result for each selected outcome. Do "
+            "not expand into unselected capabilities. If a later step requires a "
+            "write or a consequential choice, pause once with a concise combined "
+            "plan and ask for that decision."
+        ),
+    )
+
+
+def group_use_cases(
+    group: WorkflowGroup,
+    selection: str,
+) -> tuple[GuidedUseCase, ...] | None:
+    indices = parse_menu_indices(selection, maximum=len(group.use_case_keys))
+    if indices is None:
+        direct = find_use_case(selection)
+        if direct is not None and direct.key in group.use_case_keys:
+            return (direct,)
+        return None
+    return tuple(
+        GUIDED_USE_CASES_BY_KEY[group.use_case_keys[index - 1]]
+        for index in indices
+    )
+
+
 def print_use_case_menu() -> None:
-    print("\nHow can I help?")
-    print("---------------")
-    print("  1. Recommend what I should check first (recommended)")
-    print("     Discover relevant metrics and propose useful starting checks.")
-    print("\nTopics")
-    for index, group in enumerate(WORKFLOW_GROUPS, start=2):
+    print("\nGalileo shortcuts — not limits")
+    print("-------------------------------")
+    for index, use_case in enumerate(QUICK_USE_CASES, start=1):
+        suffix = " (recommended)" if use_case is QUALITY_OVERVIEW_USE_CASE else ""
+        print(f"  {index}. {use_case.title}{suffix}")
+        print(f"     {use_case.description}")
+    print("\nExplore by topic")
+    for index, group in enumerate(WORKFLOW_GROUPS, start=len(QUICK_USE_CASES) + 1):
         print(f"  {index}. {group.title}")
         print(f"     {group.description}")
     print("  0. Ask my own question")
+    print(
+        "\nChoose one shortcut, combine quick actions (for example 1,2), "
+        "open a topic, or type any request."
+    )
 
 
 def print_group_menu(group: WorkflowGroup) -> None:
@@ -305,7 +412,26 @@ def print_group_menu(group: WorkflowGroup) -> None:
         use_case = GUIDED_USE_CASES_BY_KEY[key]
         print(f"  {index}. {use_case.title}")
         print(f"     {use_case.description}")
-    print("  b. Back to topics")
+    print("  0. Ask my own question")
+    print("  b. Back to all shortcuts")
+    print(
+        f"\nChoose one or up to {MAX_COMBINED_WORKFLOWS} workflows "
+        "(for example 1,3), or type any request."
+    )
+
+
+def print_capability_catalog() -> None:
+    print("\nFull capability catalog")
+    print("-----------------------")
+    print("These workflows are shortcuts. Free-form Galileo and EvalOps requests are welcome.")
+    print("\nQuick actions")
+    for use_case in QUICK_USE_CASES:
+        print(f"  • {use_case.title} — {use_case.description}")
+    for group in WORKFLOW_GROUPS:
+        print(f"\n{group.title}")
+        for key in group.use_case_keys:
+            use_case = GUIDED_USE_CASES_BY_KEY[key]
+            print(f"  • {use_case.title} — {use_case.description}")
 
 
 def choose_group_use_case(
@@ -317,12 +443,19 @@ def choose_group_use_case(
         selection = input_fn("\nChoose an option: ").strip()
         if _normalize(selection) in {"b", "back", "menu", "topics"}:
             return None
-        if selection.isdigit() and 1 <= int(selection) <= len(group.use_case_keys):
-            return GUIDED_USE_CASES_BY_KEY[group.use_case_keys[int(selection) - 1]]
-        direct = find_use_case(selection)
-        if direct is not None and direct.key in group.use_case_keys:
-            return direct
-        print(f"Enter 1–{len(group.use_case_keys)} or 'b' to go back.")
+        if selection == "0":
+            return None
+        try:
+            selected = group_use_cases(group, selection)
+        except ValueError as exc:
+            print(exc)
+            continue
+        if selected is not None:
+            return combine_use_cases(selected)
+        print(
+            f"Enter 1–{len(group.use_case_keys)}, combine up to "
+            f"{MAX_COMBINED_WORKFLOWS}, or enter 'b'."
+        )
 
 
 def select_use_case_from_menu(
@@ -330,17 +463,44 @@ def select_use_case_from_menu(
     input_fn: Callable[[str], str] = input,
 ) -> GuidedUseCase | None:
     normalized = _normalize(selection)
-    if normalized in {"1", "recommended", "recommend"}:
-        return RECOMMENDED_USE_CASE
-    if selection.isdigit() and 2 <= int(selection) <= len(WORKFLOW_GROUPS) + 1:
-        return choose_group_use_case(WORKFLOW_GROUPS[int(selection) - 2], input_fn)
+    quick_aliases = {
+        "overview": QUALITY_OVERVIEW_USE_CASE,
+        "summary": QUALITY_OVERVIEW_USE_CASE,
+        "recommended": RECOMMENDED_USE_CASE,
+        "recommend": RECOMMENDED_USE_CASE,
+    }
+    if normalized in quick_aliases:
+        return quick_aliases[normalized]
+    maximum = len(QUICK_USE_CASES) + len(WORKFLOW_GROUPS)
+    try:
+        indices = parse_menu_indices(selection, maximum=maximum)
+    except ValueError as exc:
+        print(exc)
+        return None
+    if indices is not None:
+        quick = tuple(
+            QUICK_USE_CASES[index - 1]
+            for index in indices
+            if index <= len(QUICK_USE_CASES)
+        )
+        group_indices = tuple(
+            index - len(QUICK_USE_CASES) - 1
+            for index in indices
+            if index > len(QUICK_USE_CASES)
+        )
+        if group_indices:
+            if len(indices) > 1:
+                print("Open one topic first, then combine workflows inside it.")
+                return None
+            return choose_group_use_case(WORKFLOW_GROUPS[group_indices[0]], input_fn)
+        return combine_use_cases(quick)
     direct = find_use_case(selection)
     if direct is not None:
         return direct
     group = find_workflow_group(selection)
     if group is not None:
         return choose_group_use_case(group, input_fn)
-    print(f"Choose 0–{len(WORKFLOW_GROUPS) + 1}, a topic, or type your own request.")
+    print(f"Choose 0–{maximum}, a topic, or type your own request.")
     return None
 
 

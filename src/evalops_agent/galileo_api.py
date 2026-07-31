@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from galileo import Dataset, Experiment, LogStream, Message, MessageRole, Project, Prompt
 from galileo.config import GalileoPythonConfig
 from galileo.datasets import Datasets
+from galileo.scorers import Scorers
 from galileo.resources.api.datasets import (
     update_dataset_content_datasets_dataset_id_content_patch as update_dataset_content,
 )
@@ -33,6 +35,10 @@ STANDARD_METRIC_COLUMNS = {
     "num_output_tokens": "num_output_tokens",
     "num_total_tokens": "num_total_tokens",
 }
+SCORER_ID_PATTERN = re.compile(
+    r"(?<![0-9a-fA-F])[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-"
+    r"[0-9a-fA-F]{12}(?![0-9a-fA-F])"
+)
 
 
 class GalileoService:
@@ -255,8 +261,12 @@ class GalileoService:
             raise RuntimeError("Galileo returned no metrics response.")
         if not hasattr(response, "aggregate_metrics"):
             raise RuntimeError(f"Galileo rejected the metrics query: {response}")
-        catalog = self.metric_catalog(scope)
         raw = response.to_dict()
+        catalog = self._catalog_with_aggregate_scorers(
+            scope,
+            self.metric_catalog(scope),
+            raw.get("aggregate_metrics", {}),
+        )
         return sanitize(
             {
                 "available_metrics": sorted(catalog.values()),
@@ -298,6 +308,49 @@ class GalileoService:
                     catalog[str(column_id)] = str(info["metric_key_alias"])
         self._metric_catalog_cache[cache_key] = catalog
         return dict(catalog)
+
+    def _catalog_with_aggregate_scorers(
+        self,
+        scope: Scope,
+        catalog: dict[str, str],
+        aggregate_metrics: Any,
+    ) -> dict[str, str]:
+        """Resolve only scorer IDs present in this aggregate response."""
+        if not isinstance(aggregate_metrics, dict):
+            return catalog
+        scorer_ids = sorted(
+            {
+                scorer_id
+                for key in aggregate_metrics
+                for scorer_id in SCORER_ID_PATTERN.findall(str(key))
+                if scorer_id not in catalog
+            }
+        )[:50]
+        if not scorer_ids:
+            return catalog
+        try:
+            scorers = Scorers().list_by_ids(scorer_ids)
+        except Exception:
+            # Friendly metadata is optional; the metrics query remains useful if
+            # the scorer catalog endpoint is unavailable to this API key.
+            return catalog
+        enriched = dict(catalog)
+        for scorer in scorers:
+            scorer_id = str(getattr(scorer, "id", ""))
+            alias = next(
+                (
+                    value.strip()
+                    for attribute in ("metric_name", "name", "label")
+                    if isinstance((value := getattr(scorer, attribute, None)), str)
+                    and value.strip()
+                ),
+                None,
+            )
+            if scorer_id and alias:
+                enriched[scorer_id] = alias
+        cache_key = (scope.project_id, scope.source_stream_id)
+        self._metric_catalog_cache[cache_key] = enriched
+        return enriched
 
     def profile_metric_values(
         self,
