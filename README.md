@@ -39,7 +39,7 @@ project operations.
 - Python 3.12, 3.13, or 3.14
 - A Galileo account and API key
 - A Galileo project with a source Log Stream
-- Access to an OpenAI-compatible model endpoint
+- Access to Gemini 2.5 Flash through the Galileo Model Router
 - A Galileo Agent Control endpoint
 
 ### 2. Install
@@ -75,14 +75,19 @@ Open `.env` and review these core settings:
 | `GALILEO_API_KEY` | API key used by Galileo and Agent Control. |
 | `GALILEO_PROJECT` | Project used automatically when the agent starts. |
 | `GALILEO_LOG_STREAM` | Source Log Stream used automatically for investigations. |
-| `OPENAI_API_KEY` | Key for the configured model endpoint. |
-| `OPENAI_BASE_URL` | Optional OpenAI-compatible endpoint; leave blank for the standard OpenAI API. |
-| `EVALOPS_MODEL` | Model name supported by the configured endpoint. |
+| `OPENAI_API_KEY` | Key authorized to use the Galileo Model Router. |
+| `OPENAI_BASE_URL` | Defaults to the Galileo Model Router: `https://llm.galileo.ai/v1`. |
+| `EVALOPS_MODEL` | Defaults to `gemini-2.5-flash`. |
 | `AGENT_CONTROL_URL` | Galileo Agent Control service endpoint. |
 
 The template also includes defaults for the telemetry Log Stream, agent name,
 query limits, and evaluation budgets. `.env` is excluded from Git and Docker;
 do not place credentials in `.env.example`.
+
+The distributed configuration intentionally uses Gemini 2.5 Flash, matching
+the original demo application. The model connection remains OpenAI-compatible,
+so deployments can select another endpoint and model by changing
+`OPENAI_BASE_URL`, `OPENAI_API_KEY`, and `EVALOPS_MODEL` together.
 
 To use a centrally managed environment file instead:
 
