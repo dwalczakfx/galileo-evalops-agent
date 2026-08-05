@@ -1,20 +1,23 @@
 from __future__ import annotations
 
-from .prompts import STARTER_REQUESTS
+from .prompts import STARTER_REQUEST_GROUPS
 from .use_cases import print_use_case_menu
 
 
 def print_starter_requests() -> None:
-    print("\nTry one of these:")
-    for index, request in enumerate(STARTER_REQUESTS, start=1):
-        print(f"  {index}. {request}")
+    print("\nExample requests by topic")
+    print("-------------------------")
+    for title, requests in STARTER_REQUEST_GROUPS:
+        print(f"\n{title}")
+        for request in requests:
+            print(f"  • {request}")
 
 
 def print_guided_start() -> None:
     print_use_case_menu()
     print(
-        "\nChoose a workflow number, type your own request, or enter "
-        "'usecases' to show this menu again."
+        "\nChoose one shortcut, combine options such as '1,2', open a topic, "
+        "or type any request. Enter 'capabilities' for the full catalog."
     )
 
 

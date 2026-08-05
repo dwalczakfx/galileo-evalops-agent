@@ -26,7 +26,18 @@ from .presentation import (
 )
 from .security import sanitize
 from .tools import ToolRegistry
-from .use_cases import GUIDED_USE_CASES, GUIDED_USE_CASES_BY_KEY, print_use_case_menu
+from .use_cases import (
+    QUICK_USE_CASES,
+    WORKFLOW_GROUPS,
+    combine_use_cases,
+    find_use_case,
+    find_workflow_group,
+    group_use_cases,
+    parse_menu_indices,
+    print_capability_catalog,
+    print_group_menu,
+    print_use_case_menu,
+)
 
 
 def _confirm(prompt: str, default_yes: bool = True) -> bool:
@@ -227,6 +238,43 @@ def run_doctor(settings: Settings, service: GalileoService, args: argparse.Names
         print("  Agent Control authentication: ✓")
         print("  EvalOps Agent registration: ✓")
         if scope.telemetry_stream_id:
+            starter_names = {spec.name for spec in STARTER_CONTROLS}
+            try:
+                attached = control_service.list_controls_for_target(
+                    target_type="log_stream",
+                    target_id=scope.telemetry_stream_id,
+                    limit=20,
+                )
+            except Exception as exc:
+                safe_error = sanitize(str(exc), settings.secret_values(), 500)
+                print(f"  Agent Control Log Stream attachments: failed ({safe_error})")
+                ready = False
+            else:
+                attached_controls = (
+                    attached.get("controls", [])
+                    if isinstance(attached, dict)
+                    else []
+                )
+                attached_names = {
+                    str(item.get("name"))
+                    for item in attached_controls
+                    if isinstance(item, dict) and item.get("name")
+                }
+                attached_count = len(starter_names & attached_names)
+                if starter_names.issubset(attached_names):
+                    print(
+                        "  Agent Control Log Stream attachments: "
+                        f"{attached_count}/{len(starter_names)} on "
+                        f"{scope.telemetry_stream_name} ✓"
+                    )
+                else:
+                    print(
+                        "  Agent Control Log Stream attachments: "
+                        f"{attached_count}/{len(starter_names)} on "
+                        f"{scope.telemetry_stream_name} — run setup "
+                        "--with-agent-control"
+                    )
+                    ready = False
             try:
                 effective = control_service.list_effective_controls(
                     agent_name=settings.agent_name,
@@ -248,7 +296,6 @@ def run_doctor(settings: Settings, service: GalileoService, args: argparse.Names
                     for item in controls
                     if isinstance(item, dict) and item.get("name")
                 }
-                starter_names = {spec.name for spec in STARTER_CONTROLS}
                 starter_count = len(starter_names & names)
                 if starter_names.issubset(names):
                     print(
@@ -340,6 +387,10 @@ def run_setup(
     print(f"Policy created:     {'yes' if result['policy_created'] else 'no, reused'}")
     print(f"Controls created:   {len(result['created_controls'])}")
     print(f"Controls reused:    {len(result['reused_controls'])}")
+    print(
+        f"Target attachments: {result['target_attachment_count']} verified on "
+        f"{result['target_name']}"
+    )
     print(f"Effective controls: {result['effective_control_count']} verified")
     print("LLM/evaluator calls: 0")
     return 0
@@ -395,6 +446,23 @@ def _run_presentation_steps(
     )
 
 
+def _is_menu_selection(user_input: str, *, menu_open: bool) -> bool:
+    if not menu_open:
+        return False
+    try:
+        numeric = parse_menu_indices(
+            user_input,
+            maximum=len(QUICK_USE_CASES) + len(WORKFLOW_GROUPS),
+        )
+    except ValueError:
+        return True
+    return bool(
+        numeric is not None
+        or find_use_case(user_input) is not None
+        or find_workflow_group(user_input) is not None
+    )
+
+
 def run_chat(
     settings: Settings,
     service: GalileoService,
@@ -434,9 +502,10 @@ def run_chat(
         print_app_intro(scope)
         print_use_case_menu()
         print(
-            "\nChoose a workflow number, type your own request, or enter "
-            "'usecases', 'examples', or 'quit'."
+            "\nCommands: 'menu', 'back', 'capabilities', 'examples', or 'quit'."
         )
+        menu_open = True
+        active_group = None
         while True:
             try:
                 user_input = input("\nevalops> ").strip()
@@ -449,27 +518,114 @@ def run_chat(
                 break
             if user_input.lower() in {"usecases", "workflows", "menu"}:
                 print_use_case_menu()
+                menu_open = True
+                active_group = None
+                continue
+            if user_input.lower() in {"back", "b"}:
+                print_use_case_menu()
+                menu_open = True
+                active_group = None
+                continue
+            if user_input.lower() in {"capabilities", "capability", "help"}:
+                print_capability_catalog()
                 continue
             if user_input.lower() == "examples":
                 print_starter_requests()
                 continue
-            if user_input.isdigit():
-                index = int(user_input) - 1
-                if int(user_input) == 0:
-                    print("Type your own EvalOps question at the prompt.")
+            selected_use_cases = ()
+            if menu_open:
+                if user_input == "0":
+                    print("Type any Galileo or EvalOps question at the prompt.")
+                    menu_open = False
+                    active_group = None
                     continue
-                if 0 <= index < len(GUIDED_USE_CASES):
-                    use_case = GUIDED_USE_CASES[index]
-                    print(f"\nStarting workflow: {use_case.title}")
-                    user_input = use_case.opening_request
+                if active_group is not None:
+                    try:
+                        selected = group_use_cases(active_group, user_input)
+                    except ValueError as exc:
+                        print(exc)
+                        continue
+                    if selected is not None:
+                        selected_use_cases = selected
+                    else:
+                        direct = find_use_case(user_input)
+                        next_group = find_workflow_group(user_input)
+                        if direct is not None:
+                            selected_use_cases = (direct,)
+                        elif next_group is not None:
+                            active_group = next_group
+                            print_group_menu(active_group)
+                            continue
+                        else:
+                            menu_open = False
+                            active_group = None
                 else:
-                    print(f"Choose a workflow from 0 to {len(GUIDED_USE_CASES)}.")
+                    direct = find_use_case(user_input)
+                    group = find_workflow_group(user_input)
+                    try:
+                        indices = parse_menu_indices(
+                            user_input,
+                            maximum=len(QUICK_USE_CASES) + len(WORKFLOW_GROUPS),
+                        )
+                    except ValueError as exc:
+                        print(exc)
+                        continue
+                    if indices is not None:
+                        quick = tuple(
+                            QUICK_USE_CASES[index - 1]
+                            for index in indices
+                            if index <= len(QUICK_USE_CASES)
+                        )
+                        groups = tuple(
+                            WORKFLOW_GROUPS[index - len(QUICK_USE_CASES) - 1]
+                            for index in indices
+                            if index > len(QUICK_USE_CASES)
+                        )
+                        if groups:
+                            if len(indices) > 1:
+                                print(
+                                    "Open one topic first, then choose up to three "
+                                    "workflows inside it."
+                                )
+                                continue
+                            active_group = groups[0]
+                            print_group_menu(active_group)
+                            continue
+                        selected_use_cases = quick
+                    elif direct is not None:
+                        selected_use_cases = (direct,)
+                    elif group is not None:
+                        active_group = group
+                        print_group_menu(active_group)
+                        continue
+                    else:
+                        menu_open = False
+            elif not user_input.isdigit():
+                direct = find_use_case(user_input)
+                group = find_workflow_group(user_input)
+                if direct is not None:
+                    selected_use_cases = (direct,)
+                elif group is not None:
+                    active_group = group
+                    menu_open = True
+                    print_group_menu(active_group)
                     continue
-            elif user_input.lower() in GUIDED_USE_CASES_BY_KEY:
-                use_case = GUIDED_USE_CASES_BY_KEY[user_input.lower()]
+            if selected_use_cases:
+                use_case = combine_use_cases(selected_use_cases)
                 print(f"\nStarting workflow: {use_case.title}")
                 user_input = use_case.opening_request
+                menu_open = False
+                active_group = None
+            else:
+                # Once a workflow or free-form conversation starts, numbers are
+                # answers to the agent (thresholds, hours, limits), not menu choices.
+                menu_open = False
+                active_group = None
             _run_agent_request(agent, telemetry, scope, user_input)
+            print(
+                "\nContinue naturally, or type 'menu' for shortcuts and "
+                "'capabilities' for the full catalog."
+            )
     return 0
 
 

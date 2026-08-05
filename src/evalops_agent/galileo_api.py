@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from galileo import Dataset, Experiment, LogStream, Message, MessageRole, Project, Prompt
 from galileo.config import GalileoPythonConfig
 from galileo.datasets import Datasets
+from galileo.scorers import Scorers
 from galileo.resources.api.datasets import (
     update_dataset_content_datasets_dataset_id_content_patch as update_dataset_content,
 )
@@ -24,6 +26,19 @@ from galileo.search import get_traces
 from .config import Settings
 from .models import BudgetExceeded, Scope, TimeWindow
 from .security import sanitize
+
+
+STANDARD_METRIC_COLUMNS = {
+    "duration_ns": "duration_ns",
+    "cost": "cost",
+    "num_input_tokens": "num_input_tokens",
+    "num_output_tokens": "num_output_tokens",
+    "num_total_tokens": "num_total_tokens",
+}
+SCORER_ID_PATTERN = re.compile(
+    r"(?<![0-9a-fA-F])[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-"
+    r"[0-9a-fA-F]{12}(?![0-9a-fA-F])"
+)
 
 
 class GalileoService:
@@ -246,8 +261,12 @@ class GalileoService:
             raise RuntimeError("Galileo returned no metrics response.")
         if not hasattr(response, "aggregate_metrics"):
             raise RuntimeError(f"Galileo rejected the metrics query: {response}")
-        catalog = self.metric_catalog(scope)
         raw = response.to_dict()
+        catalog = self._catalog_with_aggregate_scorers(
+            scope,
+            self.metric_catalog(scope),
+            raw.get("aggregate_metrics", {}),
+        )
         return sanitize(
             {
                 "available_metrics": sorted(catalog.values()),
@@ -278,13 +297,7 @@ class GalileoService:
             starting_token=0,
         )
         records = [] if not isinstance(response.records, list) else response.records
-        catalog: dict[str, str] = {
-            "duration_ns": "duration_ns",
-            "cost": "cost",
-            "num_input_tokens": "num_input_tokens",
-            "num_output_tokens": "num_output_tokens",
-            "num_total_tokens": "num_total_tokens",
-        }
+        catalog: dict[str, str] = dict(STANDARD_METRIC_COLUMNS)
         for record in records:
             data = record.to_dict()
             metric_info = data.get("metric_info") or {}
@@ -295,6 +308,170 @@ class GalileoService:
                     catalog[str(column_id)] = str(info["metric_key_alias"])
         self._metric_catalog_cache[cache_key] = catalog
         return dict(catalog)
+
+    def _catalog_with_aggregate_scorers(
+        self,
+        scope: Scope,
+        catalog: dict[str, str],
+        aggregate_metrics: Any,
+    ) -> dict[str, str]:
+        """Resolve only scorer IDs present in this aggregate response."""
+        if not isinstance(aggregate_metrics, dict):
+            return catalog
+        scorer_ids = sorted(
+            {
+                scorer_id
+                for key in aggregate_metrics
+                for scorer_id in SCORER_ID_PATTERN.findall(str(key))
+                if scorer_id not in catalog
+            }
+        )[:50]
+        if not scorer_ids:
+            return catalog
+        try:
+            scorers = Scorers().list_by_ids(scorer_ids)
+        except Exception:
+            # Friendly metadata is optional; the metrics query remains useful if
+            # the scorer catalog endpoint is unavailable to this API key.
+            return catalog
+        enriched = dict(catalog)
+        for scorer in scorers:
+            scorer_id = str(getattr(scorer, "id", ""))
+            alias = next(
+                (
+                    value.strip()
+                    for attribute in ("metric_name", "name", "label")
+                    if isinstance((value := getattr(scorer, attribute, None)), str)
+                    and value.strip()
+                ),
+                None,
+            )
+            if scorer_id and alias:
+                enriched[scorer_id] = alias
+        cache_key = (scope.project_id, scope.source_stream_id)
+        self._metric_catalog_cache[cache_key] = enriched
+        return enriched
+
+    def profile_metric_values(
+        self,
+        scope: Scope,
+        window: TimeWindow,
+        *,
+        limit: int,
+    ) -> dict[str, Any]:
+        """Profile actual numeric metric coverage in one bounded recent trace page."""
+        bounded_limit = min(limit, self.settings.max_trace_candidates)
+        response = get_traces(
+            project_id=scope.project_id,
+            log_stream_id=scope.source_stream_id,
+            filters=[],
+            sort=LogRecordsSortClause(column_id="created_at", ascending=False),
+            limit=bounded_limit,
+            starting_token=0,
+        )
+        records = [] if not isinstance(response.records, list) else response.records
+        profiles: dict[str, dict[str, Any]] = {}
+        discovered: dict[str, str] = {}
+        configured_observed: set[str] = set()
+        candidates_in_window = 0
+
+        for record in records:
+            data = record.to_dict()
+            metric_info = data.get("metric_info") or {}
+            observed_items: list[tuple[str, dict[str, Any], str]] = []
+            if isinstance(metric_info, dict):
+                for column_id, info in metric_info.items():
+                    if not isinstance(info, dict):
+                        continue
+                    alias = info.get("metric_key_alias") or STANDARD_METRIC_COLUMNS.get(
+                        str(column_id)
+                    )
+                    if not alias:
+                        continue
+                    name = str(alias)
+                    discovered[str(column_id)] = name
+                    configured_observed.add(name)
+                    observed_items.append((str(column_id), info, name))
+            created_at = self._as_datetime(data.get("created_at"))
+            if created_at is None or not window.start <= created_at <= window.end:
+                continue
+            candidates_in_window += 1
+            for column_id, info, name in observed_items:
+                profile = profiles.setdefault(
+                    name,
+                    {
+                        "metric": name,
+                        "samples_present": 0,
+                        "values": [],
+                        "status_counts": {},
+                    },
+                )
+                profile["samples_present"] += 1
+                status = info.get("status_type")
+                if status is not None:
+                    status_name = str(getattr(status, "value", status))[:80]
+                    status_counts = profile["status_counts"]
+                    status_counts[status_name] = status_counts.get(status_name, 0) + 1
+                score = self._metric_score(metric_info, column_id)
+                if score is not None:
+                    profile["values"].append(score)
+
+        if discovered:
+            cache_key = (scope.project_id, scope.source_stream_id)
+            cached = self._metric_catalog_cache.get(
+                cache_key,
+                dict(STANDARD_METRIC_COLUMNS),
+            )
+            self._metric_catalog_cache[cache_key] = {**cached, **discovered}
+
+        metric_profiles = []
+        for name in sorted(profiles):
+            profile = profiles[name]
+            values = profile.pop("values")
+            numeric_count = len(values)
+            metric_profiles.append(
+                {
+                    **profile,
+                    "samples_with_numeric_value": numeric_count,
+                    "samples_without_numeric_value": (
+                        profile["samples_present"] - numeric_count
+                    ),
+                    "numeric_coverage_percent": (
+                        round(100 * numeric_count / candidates_in_window, 1)
+                        if candidates_in_window
+                        else 0.0
+                    ),
+                    "minimum": min(values) if values else None,
+                    "maximum": max(values) if values else None,
+                    "average": round(sum(values) / numeric_count, 6) if values else None,
+                }
+            )
+
+        with_values = [
+            item["metric"]
+            for item in metric_profiles
+            if item["samples_with_numeric_value"] > 0
+        ]
+        without_values = [
+            item["metric"]
+            for item in metric_profiles
+            if item["samples_with_numeric_value"] == 0
+        ]
+        return {
+            "window": window.public_dict(),
+            "configured_metrics_observed": sorted(configured_observed),
+            "metrics_with_numeric_values": with_values,
+            "metrics_without_numeric_values": without_values,
+            "metrics_not_observed_in_window": sorted(
+                configured_observed - set(profiles)
+            ),
+            "metric_profiles": metric_profiles,
+            "candidates_examined": len(records),
+            "candidates_in_time_window": candidates_in_window,
+            "candidate_limit": bounded_limit,
+            "search_mode": "bounded_recent_sample",
+            "exhaustive": False,
+        }
 
     def resolve_metric_column(self, scope: Scope, metric: str) -> tuple[str, list[str]]:
         catalog = self.metric_catalog(scope)
@@ -326,6 +503,27 @@ class GalileoService:
         threshold: float,
         limit: int,
     ) -> dict[str, Any]:
+        return self.search_metric_traces(
+            scope,
+            window,
+            metric=metric,
+            comparison="below",
+            threshold=threshold,
+            limit=limit,
+        )
+
+    def search_metric_traces(
+        self,
+        scope: Scope,
+        window: TimeWindow,
+        *,
+        metric: str,
+        comparison: str,
+        threshold: float,
+        limit: int,
+    ) -> dict[str, Any]:
+        if comparison not in {"below", "above"}:
+            raise ValueError("comparison must be 'below' or 'above'.")
         metric_column, _ = self.resolve_metric_column(scope, metric)
         # The server-side metric filter currently returns an internal error for
         # some hosted streams. Keep the operation cost-predictable by reading one
@@ -341,6 +539,7 @@ class GalileoService:
         records = [] if not isinstance(response.records, list) else response.records
         matches: list[tuple[float, dict[str, Any]]] = []
         in_window = 0
+        observed_values: list[float] = []
         for record in records:
             data = record.to_dict()
             created_at = self._as_datetime(data.get("created_at"))
@@ -348,23 +547,47 @@ class GalileoService:
                 continue
             in_window += 1
             score = self._metric_score(data.get("metric_info"), metric_column)
-            if score is None or score >= threshold:
+            if score is None:
                 continue
-            data["selected_metric"] = {"name": metric, "score": score}
+            observed_values.append(score)
+            if comparison == "below" and score >= threshold:
+                continue
+            if comparison == "above" and score <= threshold:
+                continue
+            data["selected_metric"] = {
+                "name": metric,
+                "score": score,
+                "comparison": comparison,
+                "threshold": threshold,
+            }
             matches.append(
                 (
                     score,
                     sanitize(data, self.settings.secret_values(), 2500),
                 )
             )
-        matches.sort(key=lambda item: item[0])
+        matches.sort(key=lambda item: item[0], reverse=comparison == "above")
         return {
             "traces": [item[1] for item in matches[:limit]],
             "candidates_examined": len(records),
             "candidates_in_time_window": in_window,
+            "metric_values_examined": len(observed_values),
+            "metric_values_missing": in_window - len(observed_values),
+            "observed_minimum": min(observed_values) if observed_values else None,
+            "observed_maximum": max(observed_values) if observed_values else None,
+            "zero_result_reason": (
+                "no_candidates_in_time_window"
+                if not in_window
+                else "no_numeric_values_in_bounded_sample"
+                if not observed_values
+                else "no_values_crossed_threshold"
+                if not matches
+                else None
+            ),
             "candidate_limit": self.settings.max_trace_candidates,
             "search_mode": "bounded_recent_sample",
             "exhaustive": False,
+            "comparison": comparison,
         }
 
     @staticmethod

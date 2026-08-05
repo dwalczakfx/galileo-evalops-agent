@@ -25,6 +25,7 @@ def values(**overrides: str) -> dict[str, str]:
 class SettingsTests(unittest.TestCase):
     def test_defaults_are_cost_bounded(self) -> None:
         settings = Settings.from_mapping(values())
+        self.assertEqual(settings.max_completion_tokens, 1600)
         self.assertEqual(settings.max_traces_per_query, 20)
         self.assertEqual(settings.max_detailed_traces, 5)
         self.assertEqual(settings.max_experiment_rows, 20)

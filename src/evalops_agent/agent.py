@@ -43,6 +43,37 @@ class EvalOpsAgent:
         except Exception as exc:
             raise_model_connection_error(exc, self.settings)
 
+    def _retry_truncated_answer(self) -> str:
+        """Request one concise replacement when a provider stops at its token limit."""
+        retry_token_budget = min(self.settings.max_completion_tokens * 2, 8000)
+        self.messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "Your preceding response was truncated by the completion limit. "
+                    "Return a complete replacement answer under 300 words using the "
+                    "evidence already in this conversation. Do not call tools again."
+                ),
+            }
+        )
+        retry = self._create_completion(
+            model=self.settings.model,
+            messages=self.messages,
+            tools=TOOL_SCHEMAS,
+            tool_choice="none",
+            max_completion_tokens=retry_token_budget,
+        )
+        choice = retry.choices[0]
+        message = choice.message
+        self.messages.append(message.model_dump(exclude_none=True))
+        content = message.content or "I could not complete the answer."
+        if getattr(choice, "finish_reason", None) == "length":
+            return content + (
+                "\n\n[The model reached EVALOPS_MAX_COMPLETION_TOKENS again; "
+                "increase that setting to receive the complete report.]"
+            )
+        return content
+
     @log(span_type="agent", name="evalops_user_request_control")
     @control(step_name="evalops_user_request")
     def guard_user_request(self, user_input: str) -> str:
@@ -61,10 +92,13 @@ class EvalOpsAgent:
                 tool_choice="auto",
                 max_completion_tokens=self.settings.max_completion_tokens,
             )
-            message = response.choices[0].message
+            choice = response.choices[0]
+            message = choice.message
             assistant_message = message.model_dump(exclude_none=True)
             self.messages.append(assistant_message)
             if not message.tool_calls:
+                if getattr(choice, "finish_reason", None) == "length":
+                    return self._retry_truncated_answer()
                 return message.content or "I could not produce an answer from the available evidence."
             budget_exhausted = False
             for index, tool_call in enumerate(message.tool_calls):
@@ -150,8 +184,11 @@ class EvalOpsAgent:
                     tool_choice="none",
                     max_completion_tokens=self.settings.max_completion_tokens,
                 )
-                final_message = final.choices[0].message
+                final_choice = final.choices[0]
+                final_message = final_choice.message
                 self.messages.append(final_message.model_dump(exclude_none=True))
+                if getattr(final_choice, "finish_reason", None) == "length":
+                    return self._retry_truncated_answer()
                 return final_message.content or (
                     "I stopped after the configured limit of "
                     f"{self.settings.max_tool_calls_per_turn} tool calls."

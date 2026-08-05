@@ -5,15 +5,24 @@ from contextlib import redirect_stdout
 from io import StringIO
 from unittest.mock import patch
 
-from evalops_agent.cli import build_parser, main, print_app_intro
+from evalops_agent.cli import _is_menu_selection, build_parser, main, print_app_intro
 from evalops_agent.models import Scope
 from evalops_agent.presentation import (
     DEMO_OPTIONS,
     choose_demo_option,
 )
+from evalops_agent.prompts import SYSTEM_PROMPT
 from evalops_agent.use_cases import (
     GUIDED_USE_CASES,
+    WORKFLOW_GROUPS,
     choose_use_case,
+    combine_use_cases,
+    find_use_case,
+    group_use_cases,
+    parse_menu_indices,
+    print_capability_catalog,
+    print_use_case_menu,
+    select_use_case_from_menu,
 )
 
 
@@ -29,6 +38,93 @@ class GuidedWorkflowTests(unittest.TestCase):
 
     def test_custom_question_returns_no_predefined_use_case(self) -> None:
         self.assertIsNone(choose_use_case(lambda _: "0"))
+
+    def test_top_menu_groups_capabilities_into_three_topics(self) -> None:
+        output = StringIO()
+        with redirect_stdout(output):
+            print_use_case_menu()
+        rendered = output.getvalue()
+        self.assertEqual(len(WORKFLOW_GROUPS), 3)
+        self.assertIn("Show my Galileo quality overview", rendered)
+        self.assertIn("Recommend what I should check first", rendered)
+        self.assertIn("Investigate production quality", rendered)
+        self.assertIn("not limits", rendered)
+        self.assertNotIn("13.", rendered)
+
+    def test_group_selection_opens_a_smaller_topic_menu(self) -> None:
+        selected = select_use_case_from_menu("3", lambda _: "3")
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.key, "signal-candidates")
+
+    def test_quality_overview_is_the_first_visible_shortcut(self) -> None:
+        selected = select_use_case_from_menu("1")
+        self.assertEqual(selected.key, "quality-overview")
+        self.assertIn("aggregate metric trend", selected.opening_request)
+        self.assertIn("every returned average_* aggregate", selected.opening_request)
+        self.assertIn("Bounded sample", selected.opening_request)
+
+    def test_multiple_shortcuts_can_be_combined(self) -> None:
+        selected = select_use_case_from_menu("1,2")
+        self.assertTrue(selected.key.startswith("combined-"))
+        self.assertIn("Show my Galileo quality overview", selected.title)
+        self.assertIn("Recommend what I should check first", selected.title)
+
+    def test_multiple_topic_workflows_can_be_combined(self) -> None:
+        selected = group_use_cases(WORKFLOW_GROUPS[0], "1,3")
+        self.assertIsNotNone(selected)
+        combined = combine_use_cases(selected)
+        self.assertIn("quality-drop", combined.key)
+        self.assertIn("signal-candidates", combined.key)
+
+    def test_menu_multi_selection_is_bounded(self) -> None:
+        self.assertEqual(parse_menu_indices("1, 2", maximum=5), (1, 2))
+        with self.assertRaisesRegex(ValueError, "at most 3"):
+            parse_menu_indices("1,2,3,4", maximum=5)
+
+    def test_full_capability_catalog_makes_shortcut_scope_explicit(self) -> None:
+        output = StringIO()
+        with redirect_stdout(output):
+            print_capability_catalog()
+        rendered = output.getvalue()
+        self.assertIn("Free-form", rendered)
+        for use_case in GUIDED_USE_CASES:
+            self.assertIn(use_case.title, rendered)
+
+    def test_workflow_title_is_a_supported_alias(self) -> None:
+        selected = find_use_case("Investigate a Galileo Signal")
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.key, "signal-handoff")
+
+    def test_numeric_conversation_answer_is_not_reinterpreted_as_menu(self) -> None:
+        self.assertTrue(_is_menu_selection("1,2", menu_open=True))
+        self.assertFalse(_is_menu_selection("20", menu_open=False))
+
+    def test_recommended_start_does_not_require_an_example(self) -> None:
+        selected = select_use_case_from_menu("2")
+        self.assertIn("do not need to provide an example", selected.opening_request.lower())
+        self.assertIn("run recommended", selected.opening_request.lower())
+        self.assertIn("under 180 words", selected.opening_request.lower())
+
+    def test_zero_result_guidance_broadens_threshold_in_correct_direction(self) -> None:
+        self.assertIn("raising the threshold", SYSTEM_PROMPT)
+        self.assertIn("lowering the threshold", SYSTEM_PROMPT)
+        self.assertIn("candidates examined", SYSTEM_PROMPT)
+
+    def test_risk_metrics_use_high_as_failure_direction(self) -> None:
+        self.assertIn("prompt\ninjection", SYSTEM_PROMPT)
+        self.assertIn("risk direction", SYSTEM_PROMPT)
+        opening = select_use_case_from_menu("2").opening_request
+        self.assertIn("above-threshold", opening)
+
+    def test_quality_workflow_requires_populated_metric_evidence(self) -> None:
+        opening = find_use_case("quality-drop").opening_request
+        self.assertIn("actual numeric metric coverage", opening)
+        self.assertIn("only a populated quality metric", opening)
+        self.assertIn("metric_values_examined", SYSTEM_PROMPT)
+        self.assertIn("candidates_in_time_window", SYSTEM_PROMPT)
+        self.assertIn("candidates_examined", SYSTEM_PROMPT)
+        self.assertIn("explicit narrower window", SYSTEM_PROMPT)
+        self.assertIn("cannot change inside an active session", SYSTEM_PROMPT)
 
     def test_demo_options_have_presenter_ready_steps(self) -> None:
         keys = [option.key for option in DEMO_OPTIONS]

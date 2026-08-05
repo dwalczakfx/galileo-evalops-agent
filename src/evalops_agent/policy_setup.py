@@ -246,7 +246,7 @@ class StarterPolicyInstaller:
                 operation="Install Agent Control starter policy",
                 project=self.scope.project_name,
                 resource=policy_name,
-                records=len(missing),
+                records=len(missing) + len(STARTER_CONTROLS),
                 details={
                     "Agent": self.settings.agent_name,
                     "Telemetry Log Stream": self.scope.telemetry_stream_name,
@@ -255,7 +255,10 @@ class StarterPolicyInstaller:
                     "Existing controls to reuse": len(existing),
                     "Decisions": "3 DENY, 1 OBSERVE",
                     "LLM or evaluator calls": 0,
-                    "Rerun behavior": "reuse matching controls and policy associations",
+                    "Direct target bindings": len(STARTER_CONTROLS),
+                    "Rerun behavior": (
+                        "reuse matching controls, policy associations, and target bindings"
+                    ),
                 },
             )
         )
@@ -317,12 +320,48 @@ class StarterPolicyInstaller:
             agent_name=self.settings.agent_name,
             policy_id=policy_id,
         )
+        target_type = "log_stream"
+        target_id = str(self.scope.telemetry_stream_id)
+        for control_id in sorted(desired_ids):
+            self.service.bind_control_to_target(
+                control_id=control_id,
+                target_type=target_type,
+                target_id=target_id,
+            )
         self.service.refresh_runtime_controls()
+
+        attached = self.service.list_controls_for_target(
+            target_type=target_type,
+            target_id=target_id,
+            limit=100,
+        )
+        attached_controls = (
+            attached.get("controls", []) if isinstance(attached, dict) else []
+        )
+        attached_ids = {
+            _extract_id(item, "id", "control_id")
+            for item in attached_controls
+            if isinstance(item, dict)
+        }
+        attached_names = {
+            str(item.get("name"))
+            for item in attached_controls
+            if isinstance(item, dict) and item.get("name")
+        }
+        expected_names = {spec.name for spec in STARTER_CONTROLS}
+        if not desired_ids.issubset(attached_ids) and not expected_names.issubset(
+            attached_names
+        ):
+            raise RuntimeError(
+                "The starter controls were written, but direct attachment to the "
+                f"telemetry Log Stream {self.scope.telemetry_stream_name!r} could "
+                "not be verified."
+            )
 
         effective = self.service.list_effective_controls(
             agent_name=self.settings.agent_name,
-            target_type="log_stream",
-            target_id=str(self.scope.telemetry_stream_id),
+            target_type=target_type,
+            target_id=target_id,
         )
         effective_controls = (
             effective.get("controls", []) if isinstance(effective, dict) else []
@@ -337,7 +376,6 @@ class StarterPolicyInstaller:
             for item in effective_controls
             if isinstance(item, dict) and item.get("name")
         }
-        expected_names = {spec.name for spec in STARTER_CONTROLS}
         if not desired_ids.issubset(effective_ids) and not expected_names.issubset(
             effective_names
         ):
@@ -353,6 +391,10 @@ class StarterPolicyInstaller:
             "policy_created": created_policy,
             "created_controls": created_controls,
             "reused_controls": sorted(set(control_ids) - set(created_controls)),
+            "target_type": target_type,
+            "target_id": target_id,
+            "target_name": self.scope.telemetry_stream_name,
+            "target_attachment_count": len(expected_names),
             "effective_control_count": len(expected_names),
             "verified": True,
         }

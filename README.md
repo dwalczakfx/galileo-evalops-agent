@@ -39,7 +39,7 @@ project operations.
 - Python 3.12, 3.13, or 3.14
 - A Galileo account and API key
 - A Galileo project with a source Log Stream
-- Access to an OpenAI-compatible model endpoint
+- Access to Gemini 2.5 Flash through the Galileo Model Router
 - A Galileo Agent Control endpoint
 
 ### 2. Install
@@ -75,14 +75,19 @@ Open `.env` and review these core settings:
 | `GALILEO_API_KEY` | API key used by Galileo and Agent Control. |
 | `GALILEO_PROJECT` | Project used automatically when the agent starts. |
 | `GALILEO_LOG_STREAM` | Source Log Stream used automatically for investigations. |
-| `OPENAI_API_KEY` | Key for the configured model endpoint. |
-| `OPENAI_BASE_URL` | Optional OpenAI-compatible endpoint; leave blank for the standard OpenAI API. |
-| `EVALOPS_MODEL` | Model name supported by the configured endpoint. |
+| `OPENAI_API_KEY` | Key authorized to use the Galileo Model Router. |
+| `OPENAI_BASE_URL` | Defaults to the Galileo Model Router: `https://llm.galileo.ai/v1`. |
+| `EVALOPS_MODEL` | Defaults to `gemini-2.5-flash`. |
 | `AGENT_CONTROL_URL` | Galileo Agent Control service endpoint. |
 
 The template also includes defaults for the telemetry Log Stream, agent name,
 query limits, and evaluation budgets. `.env` is excluded from Git and Docker;
 do not place credentials in `.env.example`.
+
+The distributed configuration intentionally uses Gemini 2.5 Flash, matching
+the original demo application. The model connection remains OpenAI-compatible,
+so deployments can select another endpoint and model by changing
+`OPENAI_BASE_URL`, `OPENAI_API_KEY`, and `EVALOPS_MODEL` together.
 
 To use a centrally managed environment file instead:
 
@@ -136,24 +141,46 @@ evalops chat --select-scope
 
 ## Guided workflows
 
-The chat menu provides ready-to-use workflows for common tasks:
+The chat starts with five shortcuts instead of displaying every capability at
+once:
 
-1. Investigate a quality drop.
-2. Find and explain low-quality traces.
-3. Build a regression dataset.
-4. Review or compare experiments.
-5. Get an EvalOps project briefing.
-6. Prepare a bounded experiment.
-7. Run Galileo Project Doctor.
-8. Find production-to-dataset coverage gaps.
-9. Evaluate release readiness.
-10. Optimize evaluation cost and budget.
-11. Build and simulate an Agent Control.
-12. Compare or bootstrap Galileo environments.
-13. Investigate a Galileo Signal.
+1. Show a Galileo quality overview.
+2. Get a recommended first check.
+3. Investigate production quality.
+4. Improve evaluations and releases.
+5. Govern and manage Galileo.
 
-The agent discovers the relevant resources before asking you to choose one, so
-these workflows do not require Galileo IDs.
+Selecting a topic opens a smaller menu with the relevant workflows. For
+example, **Investigate production quality** includes quality changes,
+low-quality trace triage, proactive Signal candidates, and handoff from a known
+Signal. Topic menus are non-blocking: you can select a shortcut, type a normal
+request, or use `back` to return. Type `menu` from anywhere to show all top-level
+shortcuts.
+
+The quality overview queries Galileo's aggregate metrics and a bounded metric
+profile, then presents activity, quality and safety, cost, latency, and token
+usage. Server aggregates are kept separate from bounded sample statistics so
+the evidence is not overstated.
+
+The recommended start profiles one bounded recent trace page in the selected
+Log Stream. It separates configured metrics from metrics that actually have
+numeric values in the requested window before proposing a check. If the window
+contains no traces or a metric has no values, the agent explains that instead of
+suggesting arbitrary threshold changes. You do not need to bring an example,
+metric, threshold, or Signal name.
+
+Once a workflow starts, short answers such as `yes`, `1h`, `0.5`, or `20` are
+passed to the conversation instead of being interpreted as menu selections.
+The agent asks for one decision at a time, offers an explanation and a default,
+and lets you accept or change it. Exact workflow titles and keys are also
+accepted.
+
+Choose up to three compatible workflows from the current menu. For example,
+`1,2` combines the two quick actions, while `1,3` combines two workflows inside
+a topic. The agent reuses shared discovery and presents each selected outcome
+separately. Use `capabilities` to display every built-in workflow. These
+workflows are shortcuts, not a whitelist: free-form Galileo and EvalOps requests
+are accepted from every menu and throughout the conversation.
 
 ## Demo mode
 
@@ -198,9 +225,16 @@ The recommended setup installs
 - Deny destructive requests targeting Galileo resources.
 - Observe prompt-injection language found in inspected traces.
 
-The setup is safe to rerun. Matching controls and policy associations are
-reused, while an unexpected control with the same name is left unchanged and
-reported for review.
+The setup attaches the controls to the versioned policy, associates that policy
+with the EvalOps Agent, and directly binds every starter control to the
+`EVALOPS_LOG_STREAM` telemetry Log Stream. This is the stream containing the
+agent's controlled LLM and tool steps; `GALILEO_LOG_STREAM` remains the source
+stream being investigated. `evalops doctor` verifies the policy, direct Log
+Stream attachments, and a target-bound runtime evaluation.
+
+Setup is safe to rerun. Matching controls, policy associations, and target
+bindings are reused, while an unexpected control with the same name is left
+unchanged and reported for review.
 
 The interactive **Build and simulate an Agent Control** workflow can validate
 new regex controls, preview their behavior against inspected traces, and
@@ -287,9 +321,9 @@ evalops --yes --project my-project demo-seed
 ## Docker
 
 ```bash
-docker build -t galileo-evalops-agent:0.4.1 .
+docker build -t galileo-evalops-agent:0.5.0 .
 docker run --rm -it --env-file .env \
-  galileo-evalops-agent:0.4.1 chat
+  galileo-evalops-agent:0.5.0 chat
 ```
 
 The image runs as an unprivileged user and does not include `.env`, tests, Git

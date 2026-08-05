@@ -108,7 +108,13 @@ class Settings:
             openai_api_key=_first(values, "OPENAI_API_KEY"),
             openai_base_url=_first(values, "OPENAI_BASE_URL") or None,
             model=_first(values, "EVALOPS_MODEL"),
-            max_completion_tokens=_int_value(values, "EVALOPS_MAX_COMPLETION_TOKENS", 800, 64, 8000),
+            max_completion_tokens=_int_value(
+                values,
+                "EVALOPS_MAX_COMPLETION_TOKENS",
+                1600,
+                64,
+                8000,
+            ),
             agent_control_url=_first(values, "AGENT_CONTROL_URL") or None,
             agent_control_api_key_header=_first(
                 values,
